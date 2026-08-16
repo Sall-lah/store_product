@@ -1,0 +1,31 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+main
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Agent directory
+.agent/
+openspec
+
+# Prisma generated files & cache
+/prisma/client/
+/db/
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db

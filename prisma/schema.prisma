@@ -1,0 +1,91 @@
+generator db {
+  provider = "go run github.com/steebchen/prisma-client-go"
+  output   = "../internal/db"
+  package  = "db"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model otp_codes {
+  id         String   @id @db.Uuid
+  user_id    String   @db.Uuid
+  code       String
+  type       OTPType
+  attempts   Int      @default(0)
+  expires_at DateTime
+  used       Boolean  @default(false)
+  created_at DateTime @default(now())
+  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model refresh_tokens {
+  id         String   @id @db.Uuid
+  user_id    String   @db.Uuid
+  token_hash String   @unique
+  expires_at DateTime
+  revoked    Boolean  @default(false)
+  created_at DateTime @default(now())
+  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model users {
+  id             String           @id @db.Uuid
+  email          String           @unique
+  password       String
+  name           String
+  role           Role             @default(CUSTOMER)
+  is_active      Boolean          @default(false)
+  created_at     DateTime         @default(now())
+  updated_at     DateTime
+  otp_codes      otp_codes[]
+  refresh_tokens refresh_tokens[]
+}
+
+enum OTPType {
+  REGISTRATION
+  PASSWORD_RESET
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+}
+
+model Product {
+  id          String           @id @default(uuid())
+  name        String
+  slug        String           @unique
+  description String?
+  basePrice   Float
+  category    String
+  isActive    Boolean          @default(true)
+  variants    ProductVariant[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([category, isActive])
+  @@index([createdAt(sort: Desc)])
+}
+
+model ProductVariant {
+  id        String   @id @default(uuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku       String   @unique
+  size      String?
+  color     String?
+  price     Float?
+  stock     Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+  @@index([size, color])
+}
