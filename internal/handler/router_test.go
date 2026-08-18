@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Sall-lah/store_product/internal/config"
@@ -62,6 +63,20 @@ func TestAdminRoutesProtection(t *testing.T) {
 
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("expected status 403 Forbidden for role 'seller', got %d", rec.Code)
+		}
+	})
+
+	t.Run("Accept Authenticated Admin with Uppercase Role POST /api/v1/products", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/products", strings.NewReader(`{}`))
+		req.Header.Set("X-User-Role", "ADMIN")
+		req.Header.Set("X-User-Id", "usr_admin_1")
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		if rec.Code == http.StatusForbidden {
+			t.Errorf("expected request to pass admin middleware for uppercase ADMIN role, got 403 Forbidden")
 		}
 	})
 }

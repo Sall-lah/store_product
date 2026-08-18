@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func TestRequireAdmin(t *testing.T) {
 	adminHandler := RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := GetUserFromContext(r.Context())
-		if !ok || user.Role != "admin" {
+		if !ok || !strings.EqualFold(strings.TrimSpace(user.Role), "admin") {
 			http.Error(w, "missing context user", http.StatusInternalServerError)
 			return
 		}
@@ -18,10 +19,36 @@ func TestRequireAdmin(t *testing.T) {
 		_, _ = w.Write([]byte("admin_ok"))
 	}))
 
-	t.Run("Authorized Admin Request", func(t *testing.T) {
+	t.Run("Authorized Admin Request (lowercase)", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/products", nil)
 		req.Header.Set("X-User-Role", "admin")
 		req.Header.Set("X-User-Id", "usr_admin_1")
+		rec := httptest.NewRecorder()
+
+		adminHandler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
+		}
+	})
+
+	t.Run("Authorized Admin Request (uppercase from gateway/auth)", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/products", nil)
+		req.Header.Set("X-User-Role", "ADMIN")
+		req.Header.Set("X-User-Id", "usr_admin_2")
+		rec := httptest.NewRecorder()
+
+		adminHandler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected status %d, got %d", http.StatusOK, rec.Code)
+		}
+	})
+
+	t.Run("Authorized Admin Request (mixed case with whitespace)", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/products", nil)
+		req.Header.Set("X-User-Role", "  Admin  ")
+		req.Header.Set("X-User-Id", "usr_admin_3")
 		rec := httptest.NewRecorder()
 
 		adminHandler.ServeHTTP(rec, req)

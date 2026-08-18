@@ -3,7 +3,7 @@
   "info": {
     "title": "Store Product Microservice API",
     "version": "1.0.0",
-    "description": "High-performance e-commerce Product Catalog and Variant Management Microservice.\nPowered by Go (Chi router), Supabase PostgreSQL, and Redis caching.\n\n### Authentication\nProtected admin endpoints require API Gateway header authentication:\n- `X-User-Role`: Must be `admin`\n- `X-User-Id`: Identifier of the authenticated admin user\n\n### Rate Limiting\nPublic and Admin endpoints enforce Redis sliding window rate limits. Response headers include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`.\n"
+    "description": "High-performance e-commerce Product Catalog and Variant Management Microservice.\nPowered by Go (Chi router), Supabase PostgreSQL, and Redis caching.\n\n### Authentication (Gateway Offloading)\nProtected admin mutation endpoints leverage API Gateway Offloading. The API Gateway (`store_gateway`) validates the incoming Bearer JWT and injects verified upstream headers:\n- `X-User-Role`: Required for admin endpoints. Case-insensitive comparison (accepts `admin`, `ADMIN`, etc.).\n- `X-User-Id`: Identifier of the authenticated admin user (e.g. `usr_admin_001`).\n\n### Rate Limiting\nPublic and Admin endpoints enforce Redis sliding window rate limits. Response headers include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`.\n"
   },
   "servers": [
     {
@@ -582,13 +582,13 @@
         "type": "apiKey",
         "in": "header",
         "name": "X-User-Role",
-        "description": "Set to `admin` for administrative access."
+        "description": "API Gateway-injected role header. Case-insensitive comparison (accepts `admin`, `ADMIN`)."
       },
       "AdminUserIdAuth": {
         "type": "apiKey",
         "in": "header",
         "name": "X-User-Id",
-        "description": "Authenticated user ID (e.g. `usr_admin_001`)."
+        "description": "API Gateway-injected user ID (e.g. `usr_admin_001`)."
       }
     },
     "headers": {
@@ -919,7 +919,7 @@
         }
       },
       "Forbidden": {
-        "description": "Access forbidden due to missing or invalid X-User-Role.",
+        "description": "Access forbidden due to missing or non-admin X-User-Role.",
         "content": {
           "application/json": {
             "schema": {

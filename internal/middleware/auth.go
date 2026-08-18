@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 type contextKey string
@@ -22,10 +23,12 @@ type GatewayUser struct {
 // RequireAdmin verifies that the incoming request was authorized by the API Gateway
 // with an admin role. In a microservices architecture, identity verification is offloaded
 // to the gateway to maintain loose coupling across backend services.
+// Role evaluation is case-insensitive (accepting "admin", "ADMIN", etc.) to maintain compatibility
+// with diverse token issuer representations across microservice boundaries.
 func RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		role := r.Header.Get("X-User-Role")
-		if role != "admin" {
+		if !strings.EqualFold(strings.TrimSpace(role), "admin") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			_ = json.NewEncoder(w).Encode(map[string]string{
