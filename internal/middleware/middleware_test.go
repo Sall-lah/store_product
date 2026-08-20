@@ -6,6 +6,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Sall-lah/store_product/internal/cache"
+	"github.com/Sall-lah/store_product/internal/config"
+	"github.com/joho/godotenv"
 )
 
 func TestRequireAdmin(t *testing.T) {
@@ -128,4 +132,50 @@ func TestRateLimiterFallbackWhenNil(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
+}
+
+func TestRateLimiterWithLiveRedis(t *testing.T) {
+	_ = godotenv.Load("../../.env", ".env")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	cacheClient := cache.NewClient(cfg)
+	if !cacheClient.IsAvailable() {
+		t.Skip("Redis is not available, skipping live rate limiter test")
+	}
+
+	// Limit to 2 requests per minute for this test tier
+	limiter := RateLimiter(cacheClient, 2, "test_limiter_tier")
+	handler := limiter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/products", nil)
+	req1.Header.Set("X-User-Id", "test_user_rate_limit")
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first request expected 200, got %d", rec1.Code)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/products", nil)
+	req2.Header.Set("X-User-Id", "test_user_rate_limit")
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second request expected 200, got %d", rec2.Code)
+	}
+
+	req3 := httptest.NewRequest(http.MethodGet, "/api/v1/products", nil)
+	req3.Header.Set("X-User-Id", "test_user_rate_limit")
+	rec3 := httptest.NewRecorder()
+	handler.ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusTooManyRequests {
+		t.Fatalf("third request expected 429 Too Many Requests, got %d", rec3.Code)
+	}
+
+	// Clean up key
+	cacheClient.Del(req1.Context(), "ratelimit:test_limiter_tier:user:test_user_rate_limit")
 }
