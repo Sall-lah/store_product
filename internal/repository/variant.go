@@ -12,6 +12,8 @@ var (
 	ErrVariantNotFound = errors.New("variant not found")
 	// ErrDuplicateSKU indicates a duplicate stock keeping unit was supplied.
 	ErrDuplicateSKU = errors.New("a variant with this SKU already exists")
+	// ErrInsufficientStock indicates the variant does not have enough inventory to fulfill the requested quantity.
+	ErrInsufficientStock = errors.New("insufficient stock for variant")
 )
 
 // VariantRepository provides persistence operations for product variants (size/color combinations).
@@ -39,6 +41,59 @@ func (r *VariantRepository) GetVariantByID(ctx context.Context, id string) (*Var
 
 	dto := ToVariantDTO(record)
 	return &dto, nil
+}
+
+// DecrementStock atomically reduces variant inventory, preventing negative stock or overselling under high concurrency.
+func (r *VariantRepository) DecrementStock(ctx context.Context, id string, quantity int) (*VariantDTO, error) {
+	if quantity <= 0 {
+		return nil, errors.New("decrement quantity must be greater than zero")
+	}
+
+	res, err := r.client.Prisma.ExecuteRaw(
+		`UPDATE "ProductVariant" SET stock = stock - $1, "updatedAt" = NOW() WHERE id = $2 AND stock >= $1 AND "isActive" = true`,
+		quantity,
+		id,
+	).Exec(ctx)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if res.Count == 0 {
+		variant, checkErr := r.GetVariantByID(ctx, id)
+		if checkErr != nil {
+			return nil, checkErr
+		}
+		if variant.Stock < quantity {
+			return nil, ErrInsufficientStock
+		}
+		return nil, errors.New("failed to decrement variant stock")
+	}
+
+	return r.GetVariantByID(ctx, id)
+}
+
+// IncrementStock atomically increases variant inventory upon order cancellation or timeout expiration.
+func (r *VariantRepository) IncrementStock(ctx context.Context, id string, quantity int) (*VariantDTO, error) {
+	if quantity <= 0 {
+		return nil, errors.New("increment quantity must be greater than zero")
+	}
+
+	res, err := r.client.Prisma.ExecuteRaw(
+		`UPDATE "ProductVariant" SET stock = stock + $1, "updatedAt" = NOW() WHERE id = $2`,
+		quantity,
+		id,
+	).Exec(ctx)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if res.Count == 0 {
+		return nil, ErrVariantNotFound
+	}
+
+	return r.GetVariantByID(ctx, id)
 }
 
 // CreateVariant creates and attaches a new variant to a parent product.

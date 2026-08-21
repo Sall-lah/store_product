@@ -89,3 +89,13 @@ model ProductVariant {
   @@index([productId])
   @@index([size, color])
 }
+
+model ProcessedEvent {
+  eventId     String   @id
+  eventType   String
+  orderId     String?
+  processedAt DateTime @default(now())
+
+  @@index([orderId])
+  @@index([processedAt(sort: Desc)])
+}

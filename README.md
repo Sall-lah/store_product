@@ -11,9 +11,15 @@ The `store_product` service operates as a backend microservice within an e-comme
 ```mermaid
 flowchart TD
     Client([Client / Web App]) --> Gateway[API Gateway / store_gateway]
+    OrderService([Order Service]) -->|Publishes order.events| Kafka[(Kafka Message Broker)]
     
     subgraph GatewayOffloading [API Gateway Offloading]
         Gateway -->|Verifies JWT & Injects X-User-Role / X-User-Id| StoreProduct[store_product Service :8080]
+    end
+
+    subgraph EventStreaming [Event Consumer Worker]
+        Kafka -->|Consumes order.created / cancelled / expired| KafkaWorker[Kafka Consumer Loop]
+        KafkaWorker --> StockHandler[Stock Event Handler]
     end
 
     subgraph ServiceInternals [Store Product Internals]
@@ -22,6 +28,8 @@ flowchart TD
         Router --> CacheLayer[Redis Cache Layer]
         Router --> Service[Service Layer]
         Service --> Repo[Repository Layer]
+        StockHandler --> Repo
+        StockHandler --> CacheLayer
     end
 
     subgraph Persistence [Data Stores]
@@ -40,10 +48,11 @@ flowchart TD
 ### Core Design Principles
 
 1. **API Gateway Offloading**: Admin mutation endpoints enforce verified headers (`X-User-Role`, `X-User-Id`) injected upstream by the API Gateway (`store_gateway`), avoiding redundant JWT decoding across microservices.
-2. **Multi-layer Redis Caching**: High-traffic public catalog queries and product detail lookups are cached with automatic multi-level invalidation on product or variant updates.
-3. **Sliding-Window Rate Limiting**: In-memory Redis sliding-window algorithm tracks and enforces request quotas across public catalog, search, and admin endpoints with standard `X-RateLimit-*` headers.
-4. **Keyset Cursor Pagination**: Public product listings utilize O(1) keyset cursor pagination (`nextCursor`, `hasMore`) for stable performance at scale.
-5. **Self-Documenting Binary**: OpenAPI 3.1.0 specifications and interactive documentation interfaces (Scalar UI and Swagger UI) are embedded directly into the Go application binary.
+2. **Event-Driven Inventory Synchronization**: Consumes Kafka topic `order.events` (`order.created`, `order.cancelled`, `order.expired`) to execute atomic stock deductions and restocking with database idempotency tracking (`processed_events`).
+3. **Multi-layer Redis Caching**: High-traffic public catalog queries and product detail lookups are cached with automatic multi-level invalidation on product or variant updates.
+4. **Sliding-Window Rate Limiting**: In-memory Redis sliding-window algorithm tracks and enforces request quotas across public catalog, search, and admin endpoints with standard `X-RateLimit-*` headers.
+5. **Keyset Cursor Pagination**: Public product listings utilize O(1) keyset cursor pagination (`nextCursor`, `hasMore`) for stable performance at scale.
+6. **Self-Documenting Binary**: OpenAPI 3.1.0 specifications and interactive documentation interfaces (Scalar UI and Swagger UI) are embedded directly into the Go application binary.
 
 ---
 
@@ -53,6 +62,7 @@ flowchart TD
 - **HTTP Framework**: [go-chi/chi/v5](https://github.com/go-chi/chi)
 - **Database & ORM**: PostgreSQL / Supabase via [Prisma Client Go](https://github.com/steebchen/prisma-client-go)
 - **Cache & Rate Limiting**: [go-redis/v9](https://github.com/redis/go-redis)
+- **Event Streaming**: [segmentio/kafka-go](https://github.com/segmentio/kafka-go)
 - **API Documentation**: OpenAPI 3.1.0, [Scalar UI](https://scalar.com), and [Swagger UI](https://swagger.io/tools/swagger-ui/)
 
 ---
@@ -90,6 +100,9 @@ cp .env.example .env
 | `RATE_LIMIT_PUBLIC_RPM` | `int` | `120` | Requests per minute for public catalog queries |
 | `RATE_LIMIT_SEARCH_RPM` | `int` | `60` | Requests per minute for search endpoints |
 | `RATE_LIMIT_ADMIN_RPM` | `int` | `30` | Requests per minute for admin mutation endpoints |
+| `KAFKA_BROKERS` | `string` | `localhost:9092` | Comma-delimited Kafka broker bootstrap addresses |
+| `KAFKA_TOPIC_ORDER_EVENTS` | `string` | `order.events` | Kafka topic for order lifecycle events (`created`, `cancelled`, `expired`) |
+| `KAFKA_CONSUMER_GROUP` | `string` | `store_product_stock_worker` | Kafka consumer group identifier for inventory synchronization |
 
 ---
 

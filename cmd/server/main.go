@@ -14,6 +14,7 @@ import (
 	"github.com/Sall-lah/store_product/internal/cache"
 	"github.com/Sall-lah/store_product/internal/config"
 	"github.com/Sall-lah/store_product/internal/db"
+	"github.com/Sall-lah/store_product/internal/event"
 	"github.com/Sall-lah/store_product/internal/handler"
 	"github.com/Sall-lah/store_product/internal/repository"
 	"github.com/Sall-lah/store_product/internal/service"
@@ -54,10 +55,23 @@ func main() {
 	// 4. Wire repository, service, and transport layers (Dependency Injection)
 	productRepo := repository.NewProductRepository(prismaClient)
 	variantRepo := repository.NewVariantRepository(prismaClient)
+	eventRepo := repository.NewEventRepository(prismaClient)
+
 	productService := service.NewProductService(productRepo, variantRepo, cacheClient)
 	productHandler := handler.NewProductHandler(productService)
 
-	// 5. Build HTTP router with route groups and rate limiters
+	// 5. Initialize Kafka consumer worker for async inventory events
+	stockEventHandler := event.NewStockEventHandler(variantRepo, eventRepo, productRepo, cacheClient)
+	kafkaConsumer := event.NewConsumer(cfg, stockEventHandler)
+
+	consumerCtx, cancelConsumer := context.WithCancel(context.Background())
+	defer cancelConsumer()
+
+	go func() {
+		kafkaConsumer.Start(consumerCtx)
+	}()
+
+	// 6. Build HTTP router with route groups and rate limiters
 	router := handler.SetupRouter(cfg, productHandler, cacheClient)
 
 	server := &http.Server{
@@ -68,7 +82,7 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// 6. Graceful shutdown handler
+	// 7. Graceful shutdown handler
 	shutdownChan := make(chan os.Signal, 1)
 	signal.Notify(shutdownChan, os.Interrupt, syscall.SIGTERM)
 
@@ -80,14 +94,20 @@ func main() {
 	}()
 
 	<-shutdownChan
-	log.Println("[INFO] Shutting down server gracefully...")
+	log.Println("[INFO] Shutting down server and Kafka consumer gracefully...")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	// Cancel Kafka consumer context and close connection
+	cancelConsumer()
+	if err := kafkaConsumer.Close(); err != nil {
+		log.Printf("[WARN] Error closing Kafka consumer: %v", err)
+	}
+
+	shutdownCtx, cancelServer := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelServer()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("[ERROR] Server shutdown error: %v", err)
 	}
 
-	log.Println("[INFO] Server stopped gracefully.")
+	log.Println("[INFO] Server and workers stopped gracefully.")
 }

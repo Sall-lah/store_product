@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -22,6 +23,11 @@ type Config struct {
 	RateLimitPublicRPM int
 	RateLimitSearchRPM int
 	RateLimitAdminRPM  int
+
+	// Kafka cluster connection and consumer parameters for asynchronous event processing
+	KafkaBrokers           []string
+	KafkaTopicOrderEvents  string
+	KafkaConsumerGroup     string
 }
 
 // Load reads configuration from the environment and optional .env file.
@@ -40,9 +46,12 @@ func Load() (*Config, error) {
 		RedisPort:          getEnv("REDIS_PORT", "6379"),
 		RedisPassword:      getEnv("REDIS_PASSWORD", ""),
 		RedisDB:            getEnvAsInt("REDIS_DB", 0),
-		RateLimitPublicRPM: getEnvAsInt("RATE_LIMIT_PUBLIC_RPM", 120),
-		RateLimitSearchRPM: getEnvAsInt("RATE_LIMIT_SEARCH_RPM", 60),
-		RateLimitAdminRPM:  getEnvAsInt("RATE_LIMIT_ADMIN_RPM", 30),
+		RateLimitPublicRPM:    getEnvAsInt("RATE_LIMIT_PUBLIC_RPM", 120),
+		RateLimitSearchRPM:    getEnvAsInt("RATE_LIMIT_SEARCH_RPM", 60),
+		RateLimitAdminRPM:     getEnvAsInt("RATE_LIMIT_ADMIN_RPM", 30),
+		KafkaBrokers:          getEnvAsSlice("KAFKA_BROKERS", []string{"localhost:9092"}),
+		KafkaTopicOrderEvents: getEnv("KAFKA_TOPIC_ORDER_EVENTS", "order.events"),
+		KafkaConsumerGroup:    getEnv("KAFKA_CONSUMER_GROUP", "store_product_stock_worker"),
 	}
 
 	return cfg, nil
@@ -69,4 +78,24 @@ func getEnvAsInt(key string, fallback int) int {
 		return val
 	}
 	return fallback
+}
+
+// getEnvAsSlice splits comma-delimited environment variable strings to enable cluster broker address injection.
+func getEnvAsSlice(key string, fallback []string) []string {
+	valStr := getEnv(key, "")
+	if valStr == "" {
+		return fallback
+	}
+	rawParts := strings.Split(valStr, ",")
+	var result []string
+	for _, part := range rawParts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	if len(result) == 0 {
+		return fallback
+	}
+	return result
 }
