@@ -134,7 +134,7 @@ func (s *ProductService) CreateProduct(ctx context.Context, input repository.Cre
 // UpdateProduct updates product attributes and purges associated Redis cache entries.
 func (s *ProductService) UpdateProduct(ctx context.Context, id string, input repository.UpdateProductInput) (*repository.ProductDTO, error) {
 	// Retrieve previous state to identify if the slug changed
-	existing, _ := s.repo.GetProductByID(ctx, id)
+	existing, _ := s.repo.GetAdminProductByID(ctx, id)
 
 	updated, err := s.repo.UpdateProduct(ctx, id, input)
 	if err != nil {
@@ -158,9 +158,9 @@ func (s *ProductService) UpdateProduct(ctx context.Context, id string, input rep
 	return updated, nil
 }
 
-// DeleteProduct deletes a product and removes all related cache records.
+// DeleteProduct soft-deletes a product and removes all related cache records.
 func (s *ProductService) DeleteProduct(ctx context.Context, id string) error {
-	existing, err := s.repo.GetProductByID(ctx, id)
+	existing, err := s.repo.GetAdminProductByID(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -215,7 +215,7 @@ func (s *ProductService) DeleteVariant(ctx context.Context, productID, variantID
 
 // invalidateProductCaches purges detail and list caches when a product's variants change.
 func (s *ProductService) invalidateProductCaches(ctx context.Context, productID string) {
-	product, err := s.repo.GetProductByID(ctx, productID)
+	product, err := s.repo.GetAdminProductByID(ctx, productID)
 	if err == nil && product != nil {
 		s.cacheClient.Del(ctx, cache.ProductDetailKey(product.ID), cache.ProductSlugKey(product.Slug))
 	}

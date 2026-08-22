@@ -144,6 +144,7 @@ func (r *ProductRepository) ListProducts(ctx context.Context, filter ProductFilt
 }
 
 // GetProductByID fetches an individual active product and its active variants by UUID.
+// Returns ErrProductNotFound if the product does not exist or has been soft-deleted (isActive = false).
 func (r *ProductRepository) GetProductByID(ctx context.Context, id string) (*ProductDTO, error) {
 	record, err := r.client.Product.FindUnique(
 		db.Product.ID.Equals(id),
@@ -156,6 +157,10 @@ func (r *ProductRepository) GetProductByID(ctx context.Context, id string) (*Pro
 			return nil, ErrProductNotFound
 		}
 		return nil, err
+	}
+
+	if !record.IsActive {
+		return nil, ErrProductNotFound
 	}
 
 	dto := ToProductDTO(record)
@@ -182,6 +187,7 @@ func (r *ProductRepository) GetAdminProductByID(ctx context.Context, id string) 
 }
 
 // GetProductBySlug fetches an individual active product and its variants by human-readable URL slug.
+// Returns ErrProductNotFound if the product does not exist or has been soft-deleted (isActive = false).
 func (r *ProductRepository) GetProductBySlug(ctx context.Context, slug string) (*ProductDTO, error) {
 	record, err := r.client.Product.FindUnique(
 		db.Product.Slug.Equals(slug),
@@ -194,6 +200,10 @@ func (r *ProductRepository) GetProductBySlug(ctx context.Context, slug string) (
 			return nil, ErrProductNotFound
 		}
 		return nil, err
+	}
+
+	if !record.IsActive {
+		return nil, ErrProductNotFound
 	}
 
 	dto := ToProductDTO(record)
@@ -265,7 +275,7 @@ func (r *ProductRepository) CreateProduct(ctx context.Context, input CreateProdu
 	}
 
 	// Fetch newly created product with relations populated
-	return r.GetProductByID(ctx, record.ID)
+	return r.GetAdminProductByID(ctx, record.ID)
 }
 
 // UpdateProduct updates mutable fields on an existing product.
@@ -292,7 +302,7 @@ func (r *ProductRepository) UpdateProduct(ctx context.Context, id string, input 
 	}
 
 	if len(updateParams) == 0 {
-		return r.GetProductByID(ctx, id)
+		return r.GetAdminProductByID(ctx, id)
 	}
 
 	record, err := r.client.Product.FindUnique(
@@ -309,14 +319,17 @@ func (r *ProductRepository) UpdateProduct(ctx context.Context, id string, input 
 		return nil, err
 	}
 
-	return r.GetProductByID(ctx, record.ID)
+	return r.GetAdminProductByID(ctx, record.ID)
 }
 
-// DeleteProduct removes a product from Supabase. Foreign key constraints cascade to variants.
+// DeleteProduct performs a soft delete by setting isActive to false on the product and all associated variants.
+// Soft deletion preserves audit history, SKU integrity, and historical order references.
 func (r *ProductRepository) DeleteProduct(ctx context.Context, id string) error {
 	_, err := r.client.Product.FindUnique(
 		db.Product.ID.Equals(id),
-	).Delete().Exec(ctx)
+	).Update(
+		db.Product.IsActive.Set(false),
+	).Exec(ctx)
 
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -325,5 +338,11 @@ func (r *ProductRepository) DeleteProduct(ctx context.Context, id string) error 
 		return err
 	}
 
-	return nil
+	// Cascade soft-deactivation to all child variants to prevent orphaned active variants
+	_, err = r.client.Prisma.ExecuteRaw(
+		`UPDATE "ProductVariant" SET "isActive" = false, "updatedAt" = NOW() WHERE "productId" = $1`,
+		id,
+	).Exec(ctx)
+
+	return err
 }

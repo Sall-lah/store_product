@@ -173,11 +173,14 @@ func (r *VariantRepository) UpdateVariant(ctx context.Context, id string, input 
 	return &dto, nil
 }
 
-// DeleteVariant deletes an existing variant entity from the database.
+// DeleteVariant performs a soft delete by setting isActive to false on the target variant.
+// Soft deletion prevents breaking historical SKU order mappings while hiding the variant from store queries.
 func (r *VariantRepository) DeleteVariant(ctx context.Context, id string) error {
 	_, err := r.client.ProductVariant.FindUnique(
 		db.ProductVariant.ID.Equals(id),
-	).Delete().Exec(ctx)
+	).Update(
+		db.ProductVariant.IsActive.Set(false),
+	).Exec(ctx)
 
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
