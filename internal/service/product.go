@@ -60,6 +60,19 @@ func (s *ProductService) ListProducts(ctx context.Context, filter repository.Pro
 	return result, nil
 }
 
+// AdminListProducts retrieves a paginated and filtered catalog list directly from PostgreSQL.
+// Bypassing Redis cache for admin queries ensures backoffice operators see immediate data changes and inactive/draft items.
+func (s *ProductService) AdminListProducts(ctx context.Context, filter repository.ProductFilter) (*repository.PaginatedProducts, error) {
+	filter.IncludeInactive = true
+	return s.repo.ListProducts(ctx, filter)
+}
+
+// AdminGetProductByID retrieves a product and all its variants (active & inactive) directly from PostgreSQL.
+// Bypassing Redis cache avoids leaking inactive product data into public cache keys while providing full visibility to admins.
+func (s *ProductService) AdminGetProductByID(ctx context.Context, id string) (*repository.ProductDTO, error) {
+	return s.repo.GetAdminProductByID(ctx, id)
+}
+
 // GetProductByID retrieves a product and its variants by ID with cache-aside pattern.
 func (s *ProductService) GetProductByID(ctx context.Context, id string) (*repository.ProductDTO, error) {
 	cacheKey := cache.ProductDetailKey(id)

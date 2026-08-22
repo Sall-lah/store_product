@@ -34,13 +34,14 @@ type OrderEventData struct {
 }
 
 // OrderEvent represents the top-level message received from Kafka order event topics.
-// It supports both envelope-wrapped payloads (`data.items`) and flattened payload structures.
+// It supports both envelope-wrapped payloads (`data.items`) and flattened payload structures,
+// as well as flexible timestamp representations (ISO 8601 strings or Unix epoch integers).
 type OrderEvent struct {
 	EventID   string         `json:"event_id,omitempty"`
 	ID        string         `json:"id,omitempty"`
 	EventType string         `json:"event_type,omitempty"`
 	Type      string         `json:"type,omitempty"`
-	Timestamp string         `json:"timestamp,omitempty"`
+	Timestamp interface{}    `json:"timestamp,omitempty"`
 	OrderID   string         `json:"order_id,omitempty"`
 	Items     []OrderItem    `json:"items,omitempty"`
 	Data      OrderEventData `json:"data,omitempty"`

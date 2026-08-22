@@ -77,6 +77,91 @@ func (h *ProductHandler) ListProducts(w http.ResponseWriter, r *http.Request) {
 	renderJSON(w, http.StatusOK, result)
 }
 
+// AdminListProducts handles GET /api/v1/admin/products for backoffice management.
+// It retrieves active, inactive, and draft catalog items directly without cache contamination.
+func (h *ProductHandler) AdminListProducts(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	filter := repository.ProductFilter{
+		Limit:           20,
+		IncludeInactive: true,
+	}
+
+	if limitStr := q.Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil {
+			filter.Limit = limit
+		}
+	}
+
+	if isActiveStr := strings.TrimSpace(q.Get("is_active")); isActiveStr != "" {
+		if isActive, err := strconv.ParseBool(isActiveStr); err == nil {
+			filter.IsActive = &isActive
+		}
+	}
+
+	if cat := strings.TrimSpace(q.Get("category")); cat != "" {
+		filter.Category = &cat
+	}
+
+	if minPriceStr := q.Get("min_price"); minPriceStr != "" {
+		if minPrice, err := strconv.ParseFloat(minPriceStr, 64); err == nil {
+			filter.MinPrice = &minPrice
+		}
+	}
+
+	if maxPriceStr := q.Get("max_price"); maxPriceStr != "" {
+		if maxPrice, err := strconv.ParseFloat(maxPriceStr, 64); err == nil {
+			filter.MaxPrice = &maxPrice
+		}
+	}
+
+	if size := strings.TrimSpace(q.Get("size")); size != "" {
+		filter.Size = &size
+	}
+
+	if color := strings.TrimSpace(q.Get("color")); color != "" {
+		filter.Color = &color
+	}
+
+	if search := strings.TrimSpace(q.Get("search")); search != "" {
+		filter.Search = &search
+	}
+
+	if cursorStr := strings.TrimSpace(q.Get("cursor")); cursorStr != "" {
+		filter.Cursor = &cursorStr
+	}
+
+	result, err := h.service.AdminListProducts(r.Context(), filter)
+	if err != nil {
+		renderError(w, http.StatusInternalServerError, "query_failed", "Failed to retrieve admin products.")
+		return
+	}
+
+	renderJSON(w, http.StatusOK, result)
+}
+
+// AdminGetProductByID handles GET /api/v1/admin/products/{id} for backoffice inspection.
+// It retrieves product and variant metadata regardless of active state.
+func (h *ProductHandler) AdminGetProductByID(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		renderError(w, http.StatusBadRequest, "invalid_id", "Product ID is required.")
+		return
+	}
+
+	product, err := h.service.AdminGetProductByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrProductNotFound) {
+			renderError(w, http.StatusNotFound, "product_not_found", "Product not found.")
+			return
+		}
+		renderError(w, http.StatusInternalServerError, "query_failed", "Failed to fetch admin product.")
+		return
+	}
+
+	renderJSON(w, http.StatusOK, product)
+}
+
 // GetProductByID handles GET /api/v1/products/{id}.
 func (h *ProductHandler) GetProductByID(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")

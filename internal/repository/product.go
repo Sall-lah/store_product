@@ -35,8 +35,12 @@ func (r *ProductRepository) ListProducts(ctx context.Context, filter ProductFilt
 		limit = 100
 	}
 
-	where := []db.ProductWhereParam{
-		db.Product.IsActive.Equals(true),
+	var where []db.ProductWhereParam
+
+	if filter.IsActive != nil {
+		where = append(where, db.Product.IsActive.Equals(*filter.IsActive))
+	} else if !filter.IncludeInactive {
+		where = append(where, db.Product.IsActive.Equals(true))
 	}
 
 	if filter.Category != nil && strings.TrimSpace(*filter.Category) != "" {
@@ -53,7 +57,9 @@ func (r *ProductRepository) ListProducts(ctx context.Context, filter ProductFilt
 
 	// Variant-level filtering (size, color)
 	var variantWhere []db.ProductVariantWhereParam
-	variantWhere = append(variantWhere, db.ProductVariant.IsActive.Equals(true))
+	if !filter.IncludeInactive {
+		variantWhere = append(variantWhere, db.ProductVariant.IsActive.Equals(true))
+	}
 	hasVariantFilter := false
 
 	if filter.Size != nil && strings.TrimSpace(*filter.Size) != "" {
@@ -92,9 +98,15 @@ func (r *ProductRepository) ListProducts(ctx context.Context, filter ProductFilt
 		}
 	}
 
+	query := r.client.Product.FindMany(where...)
+	if filter.IncludeInactive {
+		query = query.With(db.Product.Variants.Fetch())
+	} else {
+		query = query.With(db.Product.Variants.Fetch(db.ProductVariant.IsActive.Equals(true)))
+	}
+
 	// Fetch limit + 1 items to determine if a subsequent page exists without a separate COUNT(*) query
-	records, err := r.client.Product.FindMany(where...).
-		With(db.Product.Variants.Fetch(db.ProductVariant.IsActive.Equals(true))).
+	records, err := query.
 		OrderBy(
 			db.Product.CreatedAt.Order(db.SortOrderDesc),
 			db.Product.ID.Order(db.SortOrderDesc),
@@ -131,12 +143,31 @@ func (r *ProductRepository) ListProducts(ctx context.Context, filter ProductFilt
 	}, nil
 }
 
-// GetProductByID fetches an individual active product and its variants by UUID.
+// GetProductByID fetches an individual active product and its active variants by UUID.
 func (r *ProductRepository) GetProductByID(ctx context.Context, id string) (*ProductDTO, error) {
 	record, err := r.client.Product.FindUnique(
 		db.Product.ID.Equals(id),
 	).With(
 		db.Product.Variants.Fetch(db.ProductVariant.IsActive.Equals(true)),
+	).Exec(ctx)
+
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			return nil, ErrProductNotFound
+		}
+		return nil, err
+	}
+
+	dto := ToProductDTO(record)
+	return &dto, nil
+}
+
+// GetAdminProductByID fetches an individual product and all its variants (active and inactive) by UUID for backoffice inspection.
+func (r *ProductRepository) GetAdminProductByID(ctx context.Context, id string) (*ProductDTO, error) {
+	record, err := r.client.Product.FindUnique(
+		db.Product.ID.Equals(id),
+	).With(
+		db.Product.Variants.Fetch(),
 	).Exec(ctx)
 
 	if err != nil {

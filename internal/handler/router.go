@@ -32,29 +32,31 @@ func SetupRouter(cfg *config.Config, h *ProductHandler, cacheClient *cache.Clien
 	// API v1 Namespace
 	r.Route("/api/v1", func(api chi.Router) {
 
-		// Public Catalog Endpoints (Protected by sliding window rate limiter)
-		api.Group(func(public chi.Router) {
+		// Public Catalog Endpoints (Protected by sliding window rate limiter, customer-facing read-only)
+		api.Route("/products", func(public chi.Router) {
 			public.Use(middleware.RateLimiter(cacheClient, cfg.RateLimitPublicRPM, "public_catalog"))
 
-			public.Get("/products", h.ListProducts)
-			public.Get("/products/{id}", h.GetProductByID)
-			public.Get("/products/slug/{slug}", h.GetProductBySlug)
+			public.Get("/", h.ListProducts)
+			public.Get("/{id}", h.GetProductByID)
+			public.Get("/slug/{slug}", h.GetProductBySlug)
 		})
 
-		// Admin Mutation Endpoints (Enforces API Gateway X-User-Role: admin & strict rate limit)
-		api.Group(func(admin chi.Router) {
+		// Admin Backoffice Endpoints (Enforces API Gateway X-User-Role: admin & strict admin rate limit)
+		api.Route("/admin/products", func(admin chi.Router) {
 			admin.Use(middleware.RequireAdmin)
 			admin.Use(middleware.RateLimiter(cacheClient, cfg.RateLimitAdminRPM, "admin_writes"))
 
-			// Product CRUD
-			admin.Post("/products", h.CreateProduct)
-			admin.Put("/products/{id}", h.UpdateProduct)
-			admin.Delete("/products/{id}", h.DeleteProduct)
+			// Product Backoffice Management
+			admin.Get("/", h.AdminListProducts)
+			admin.Get("/{id}", h.AdminGetProductByID)
+			admin.Post("/", h.CreateProduct)
+			admin.Put("/{id}", h.UpdateProduct)
+			admin.Delete("/{id}", h.DeleteProduct)
 
-			// Variant CRUD
-			admin.Post("/products/{id}/variants", h.CreateVariant)
-			admin.Put("/products/{id}/variants/{variantId}", h.UpdateVariant)
-			admin.Delete("/products/{id}/variants/{variantId}", h.DeleteVariant)
+			// Variant Backoffice Management
+			admin.Post("/{id}/variants", h.CreateVariant)
+			admin.Put("/{id}/variants/{variantId}", h.UpdateVariant)
+			admin.Delete("/{id}/variants/{variantId}", h.DeleteVariant)
 		})
 	})
 

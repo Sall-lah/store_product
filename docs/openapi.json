@@ -148,6 +148,172 @@
             "$ref": "#/components/responses/InternalServerError"
           }
         }
+      }
+    },
+    "/api/v1/products/{id}": {
+      "get": {
+        "tags": ["Public Catalog"],
+        "summary": "Get Product by ID",
+        "description": "Retrieves single product details with all active variants.\nImplements Redis cache-aside (sub-millisecond response on cache hit).\n",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "UUID of the product.",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "example": "ca18f506-7f54-43c8-969f-5861f61b4608"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product found.",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Product"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/products/slug/{slug}": {
+      "get": {
+        "tags": ["Public Catalog"],
+        "summary": "Get Product by URL Slug",
+        "description": "Retrieves product details matching the SEO-friendly slug. Cached in Redis.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "description": "Unique URL slug of the product.",
+            "schema": {
+              "type": "string",
+              "example": "logitech-mx-master-3s"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Product"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/products": {
+      "get": {
+        "tags": ["Admin Products"],
+        "summary": "List Products for Backoffice (Including Inactive)",
+        "description": "Retrieves a paginated list of all products (including draft, inactive, and out-of-stock items) directly from the database.\n",
+        "security": [
+          {
+            "AdminRoleAuth": [],
+            "AdminUserIdAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Keyset cursor token.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return (default 20, max 100).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "is_active",
+            "in": "query",
+            "description": "Optional filter by active status.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Filter products by category.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Search by name, description, or variant SKU.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated product list retrieved successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductListResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
       },
       "post": {
         "tags": ["Admin Products"],
@@ -206,11 +372,17 @@
         }
       }
     },
-    "/api/v1/products/{id}": {
+    "/api/v1/admin/products/{id}": {
       "get": {
-        "tags": ["Public Catalog"],
-        "summary": "Get Product by ID",
-        "description": "Retrieves single product details with all active variants.\nImplements Redis cache-aside (sub-millisecond response on cache hit).\n",
+        "tags": ["Admin Products"],
+        "summary": "Get Product by ID for Backoffice",
+        "description": "Retrieves full product details and all variants (active & inactive) directly from PostgreSQL.\n",
+        "security": [
+          {
+            "AdminRoleAuth": [],
+            "AdminUserIdAuth": []
+          }
+        ],
         "parameters": [
           {
             "name": "id",
@@ -219,25 +391,13 @@
             "description": "UUID of the product.",
             "schema": {
               "type": "string",
-              "format": "uuid",
-              "example": "ca18f506-7f54-43c8-969f-5861f61b4608"
+              "format": "uuid"
             }
           }
         ],
         "responses": {
           "200": {
             "description": "Product found.",
-            "headers": {
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              }
-            },
             "content": {
               "application/json": {
                 "schema": {
@@ -245,6 +405,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
@@ -356,44 +519,7 @@
         }
       }
     },
-    "/api/v1/products/slug/{slug}": {
-      "get": {
-        "tags": ["Public Catalog"],
-        "summary": "Get Product by URL Slug",
-        "description": "Retrieves product details matching the SEO-friendly slug. Cached in Redis.",
-        "parameters": [
-          {
-            "name": "slug",
-            "in": "path",
-            "required": true,
-            "description": "Unique URL slug of the product.",
-            "schema": {
-              "type": "string",
-              "example": "logitech-mx-master-3s"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Product found.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Product"
-                }
-              }
-            }
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalServerError"
-          }
-        }
-      }
-    },
-    "/api/v1/products/{id}/variants": {
+    "/api/v1/admin/products/{id}/variants": {
       "post": {
         "tags": ["Admin Variants"],
         "summary": "Create Product Variant",
@@ -452,7 +578,7 @@
         }
       }
     },
-    "/api/v1/products/{id}/variants/{variantId}": {
+    "/api/v1/admin/products/{id}/variants/{variantId}": {
       "put": {
         "tags": ["Admin Variants"],
         "summary": "Update Product Variant",

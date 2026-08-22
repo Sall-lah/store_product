@@ -45,6 +45,16 @@ func TestStockEventHandler_OrderCreated_NilRepo(t *testing.T) {
 	}
 }
 
+func TestStockEventHandler_OrderPlaced_NilRepo(t *testing.T) {
+	handler := &StockEventHandler{}
+	ctx := context.Background()
+
+	err := handler.ProcessMessage(ctx, []byte(`{"event_id":"evt-place-1","event_type":"order.placed","items":[{"variant_id":"v-1","quantity":2}]}`))
+	if err != nil {
+		t.Errorf("expected nil error on order.placed when repo is nil in tests, got: %v", err)
+	}
+}
+
 func TestStockEventHandler_OrderCancelled_NilRepo(t *testing.T) {
 	handler := &StockEventHandler{}
 	ctx := context.Background()
@@ -52,6 +62,16 @@ func TestStockEventHandler_OrderCancelled_NilRepo(t *testing.T) {
 	err := handler.ProcessMessage(ctx, []byte(`{"event_id":"evt-cancel-1","event_type":"order.cancelled","items":[{"variant_id":"v-1","quantity":2}]}`))
 	if err != nil {
 		t.Errorf("expected nil error when repo is nil in tests, got: %v", err)
+	}
+}
+
+func TestStockEventHandler_OrderCanceledAlternateSpelling_NilRepo(t *testing.T) {
+	handler := &StockEventHandler{}
+	ctx := context.Background()
+
+	err := handler.ProcessMessage(ctx, []byte(`{"event_id":"evt-cancel-2","event_type":"order.canceled","items":[{"variant_id":"v-1","quantity":2}]}`))
+	if err != nil {
+		t.Errorf("expected nil error on order.canceled when repo is nil in tests, got: %v", err)
 	}
 }
 

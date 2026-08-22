@@ -37,14 +37,16 @@ type VariantDTO struct {
 
 // ProductFilter encapsulates query parameters for searching, filtering, and keyset cursor pagination.
 type ProductFilter struct {
-	Category *string
-	MinPrice *float64
-	MaxPrice *float64
-	Size     *string
-	Color    *string
-	Search   *string
-	Cursor   *string
-	Limit    int
+	Category        *string
+	MinPrice        *float64
+	MaxPrice        *float64
+	Size            *string
+	Color           *string
+	Search          *string
+	Cursor          *string
+	Limit           int
+	IncludeInactive bool
+	IsActive        *bool
 }
 
 // PaginatedProducts encapsulates the keyset-paginated result payload.

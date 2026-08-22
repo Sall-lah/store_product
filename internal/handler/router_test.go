@@ -43,8 +43,8 @@ func TestAdminRoutesProtection(t *testing.T) {
 	h := NewProductHandler(svc)
 	router := SetupRouter(cfg, h, nil)
 
-	t.Run("Reject Unauthenticated POST /api/v1/products", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/products", nil)
+	t.Run("Reject Unauthenticated POST /api/v1/admin/products", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/products", nil)
 		rec := httptest.NewRecorder()
 
 		router.ServeHTTP(rec, req)
@@ -54,8 +54,19 @@ func TestAdminRoutesProtection(t *testing.T) {
 		}
 	})
 
-	t.Run("Reject Non-Admin User PUT /api/v1/products/123", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/products/123", nil)
+	t.Run("Reject Unauthenticated GET /api/v1/admin/products", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/products", nil)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected status 403 Forbidden without admin header, got %d", rec.Code)
+		}
+	})
+
+	t.Run("Reject Non-Admin User PUT /api/v1/admin/products/123", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/products/123", nil)
 		req.Header.Set("X-User-Role", "seller")
 		rec := httptest.NewRecorder()
 
@@ -66,8 +77,8 @@ func TestAdminRoutesProtection(t *testing.T) {
 		}
 	})
 
-	t.Run("Accept Authenticated Admin with Uppercase Role POST /api/v1/products", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/products", strings.NewReader(`{}`))
+	t.Run("Accept Authenticated Admin with Uppercase Role POST /api/v1/admin/products", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/products", strings.NewReader(`{}`))
 		req.Header.Set("X-User-Role", "ADMIN")
 		req.Header.Set("X-User-Id", "usr_admin_1")
 		req.Header.Set("Content-Type", "application/json")
@@ -77,6 +88,40 @@ func TestAdminRoutesProtection(t *testing.T) {
 
 		if rec.Code == http.StatusForbidden {
 			t.Errorf("expected request to pass admin middleware for uppercase ADMIN role, got 403 Forbidden")
+		}
+	})
+
+	t.Run("Reject Unauthenticated DELETE /api/v1/admin/products/123", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/products/123", nil)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected status 403 Forbidden without admin header, got %d", rec.Code)
+		}
+	})
+
+	t.Run("Reject Unauthenticated Variant POST /api/v1/admin/products/123/variants", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/products/123/variants", strings.NewReader(`{}`))
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected status 403 Forbidden without admin header, got %d", rec.Code)
+		}
+	})
+
+	t.Run("Public Routes Are Accessible Without Admin Headers", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/products", nil)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		// Public endpoint should not return 403 Forbidden
+		if rec.Code == http.StatusForbidden {
+			t.Errorf("expected public catalog to be accessible without admin headers, got %d", rec.Code)
 		}
 	})
 }
