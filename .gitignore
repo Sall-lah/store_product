@@ -16,7 +16,6 @@ main
 
 # Agent directory
 .agent/
-openspec
 graphify-out
 
 # Prisma generated files & cache
