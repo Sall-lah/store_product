@@ -28,6 +28,8 @@ tags:
     description: Admin mutation endpoints for product management
   - name: Admin Variants
     description: Admin mutation endpoints for product variant management
+  - name: Admin Images
+    description: Admin operations for Cloudflare R2 presigned upload URLs and product gallery media management
 
 paths:
   /health:
@@ -498,6 +500,204 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
 
+  /api/v1/admin/products/{id}/images/presign:
+    post:
+      tags:
+        - Admin Images
+      summary: Generate Presigned Upload URL for Cloudflare R2
+      description: |
+        Validates the image file parameters (whitelist MIME types: JPEG, PNG, WEBP, AVIF, GIF, max 10MB)
+        and generates a short-lived presigned PUT URL allowing direct browser-to-R2 binary upload.
+      security:
+        - AdminRoleAuth: []
+          AdminUserIdAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Parent product UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PresignImageRequest"
+      responses:
+        "200":
+          description: Presigned upload URL generated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PresignImageResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/admin/products/{id}/images:
+    get:
+      tags:
+        - Admin Images
+      summary: List Product Images
+      description: Retrieves all images attached to a product, ordered by sort_order. Optional filter by variant_id.
+      security:
+        - AdminRoleAuth: []
+          AdminUserIdAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Parent product UUID.
+          schema:
+            type: string
+            format: uuid
+        - name: variant_id
+          in: query
+          required: false
+          description: Optional variant UUID to filter images specifically assigned to that variant.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List of product images.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProductImage"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    post:
+      tags:
+        - Admin Images
+      summary: Register Uploaded Product Image
+      description: Persists metadata for an image that was uploaded to R2, updates primary flags, and purges Redis cache.
+      security:
+        - AdminRoleAuth: []
+          AdminUserIdAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Parent product UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductImageRequest"
+      responses:
+        "201":
+          description: Product image registered successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductImage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/admin/products/{id}/images/{imageId}:
+    put:
+      tags:
+        - Admin Images
+      summary: Update Product Image Metadata
+      description: Modifies image metadata (is_primary, sort_order, alt_text, variant_id) and invalidates caches.
+      security:
+        - AdminRoleAuth: []
+          AdminUserIdAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Parent product UUID.
+          schema:
+            type: string
+            format: uuid
+        - name: imageId
+          in: path
+          required: true
+          description: Image UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProductImageRequest"
+      responses:
+        "200":
+          description: Product image updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductImage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    delete:
+      tags:
+        - Admin Images
+      summary: Delete Product Image
+      description: Removes the image record from PostgreSQL, deletes the object from Cloudflare R2, and purges caches.
+      security:
+        - AdminRoleAuth: []
+          AdminUserIdAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Parent product UUID.
+          schema:
+            type: string
+            format: uuid
+        - name: imageId
+          in: path
+          required: true
+          description: Image UUID to delete.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Image deleted successfully from database and R2 storage.
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
 components:
   securitySchemes:
     AdminRoleAuth:
@@ -574,6 +774,14 @@ components:
         is_active:
           type: boolean
           example: true
+        primary_image_url:
+          type: string
+          nullable: true
+          example: https://cdn.mystore.com/products/ca18f506/1724700000_abc.webp
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductImage"
         variants:
           type: array
           items:
@@ -628,6 +836,151 @@ components:
         is_active:
           type: boolean
           example: true
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductImage"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProductImage:
+      type: object
+      required:
+        - id
+        - product_id
+        - url
+        - r2_key
+        - is_primary
+        - sort_order
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 1735492d-ff54-47b2-bd78-b118742512f4
+        product_id:
+          type: string
+          format: uuid
+          example: ca18f506-7f54-43c8-969f-5861f61b4608
+        variant_id:
+          type: string
+          format: uuid
+          nullable: true
+          example: db2f451f-8465-4151-922f-f94575e0834c
+        url:
+          type: string
+          example: https://cdn.mystore.com/products/ca18f506/images/1724700000_abc.webp
+        r2_key:
+          type: string
+          example: products/ca18f506/images/1724700000_abc.webp
+        alt_text:
+          type: string
+          nullable: true
+          example: Ergonomic mouse side profile
+        is_primary:
+          type: boolean
+          example: true
+        sort_order:
+          type: integer
+          example: 0
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PresignImageRequest:
+      type: object
+      required:
+        - file_name
+        - content_type
+      properties:
+        file_name:
+          type: string
+          example: mouse-graphite-front.webp
+        content_type:
+          type: string
+          enum: [image/jpeg, image/jpg, image/png, image/webp, image/avif, image/gif]
+          example: image/webp
+        variant_id:
+          type: string
+          format: uuid
+          nullable: true
+          example: db2f451f-8465-4151-922f-f94575e0834c
+
+    PresignImageResponse:
+      type: object
+      required:
+        - upload_url
+        - public_url
+        - r2_key
+        - expires_in_seconds
+      properties:
+        upload_url:
+          type: string
+          example: https://pub-xxx.r2.cloudflarestorage.com/store-products/products/ca18f506/...
+        public_url:
+          type: string
+          example: https://cdn.mystore.com/products/ca18f506/images/1724700000_abc.webp
+        r2_key:
+          type: string
+          example: products/ca18f506/images/1724700000_abc.webp
+        expires_in_seconds:
+          type: integer
+          example: 900
+
+    CreateProductImageRequest:
+      type: object
+      required:
+        - url
+        - r2_key
+      properties:
+        url:
+          type: string
+          example: https://cdn.mystore.com/products/ca18f506/images/1724700000_abc.webp
+        r2_key:
+          type: string
+          example: products/ca18f506/images/1724700000_abc.webp
+        variant_id:
+          type: string
+          format: uuid
+          nullable: true
+          example: db2f451f-8465-4151-922f-f94575e0834c
+        alt_text:
+          type: string
+          nullable: true
+          example: Front angle view
+        is_primary:
+          type: boolean
+          example: true
+        sort_order:
+          type: integer
+          example: 0
+
+    UpdateProductImageRequest:
+      type: object
+      properties:
+        variant_id:
+          type: string
+          format: uuid
+          nullable: true
+          example: db2f451f-8465-4151-922f-f94575e0834c
+        alt_text:
+          type: string
+          nullable: true
+          example: Updated front angle view
+        is_primary:
+          type: boolean
+          example: false
+        sort_order:
+          type: integer
+          example: 1
         created_at:
           type: string
           format: date-time

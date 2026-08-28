@@ -9,7 +9,7 @@ import (
 
 // SetupRouter initializes the HTTP routing hierarchy, middlewares, and endpoint boundaries.
 // Separating router construction from main.go enables simple end-to-end integration testing.
-func SetupRouter(cfg *config.Config, h *ProductHandler, cacheClient *cache.Client) *chi.Mux {
+func SetupRouter(cfg *config.Config, h *ProductHandler, imgHandler *ImageHandler, cacheClient *cache.Client) *chi.Mux {
 	r := chi.NewRouter()
 
 	// Global cross-cutting middlewares
@@ -57,6 +57,15 @@ func SetupRouter(cfg *config.Config, h *ProductHandler, cacheClient *cache.Clien
 			admin.Post("/{id}/variants", h.CreateVariant)
 			admin.Put("/{id}/variants/{variantId}", h.UpdateVariant)
 			admin.Delete("/{id}/variants/{variantId}", h.DeleteVariant)
+
+			// Media & Image Gallery Backoffice Management (Cloudflare R2 Direct Upload & Gallery)
+			if imgHandler != nil {
+				admin.Post("/{id}/images/presign", imgHandler.PresignImage)
+				admin.Post("/{id}/images", imgHandler.CreateImage)
+				admin.Get("/{id}/images", imgHandler.ListImages)
+				admin.Put("/{id}/images/{imageId}", imgHandler.UpdateImage)
+				admin.Delete("/{id}/images/{imageId}", imgHandler.DeleteImage)
+			}
 		})
 	})
 

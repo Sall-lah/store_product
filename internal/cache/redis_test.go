@@ -63,7 +63,7 @@ func TestRedisLiveOperations(t *testing.T) {
 
 	client := cache.NewClient(cfg)
 	if !client.IsAvailable() {
-		t.Fatalf("Redis is not reachable at %s with current config", cfg.RedisAddr())
+		t.Skipf("Redis is not reachable at %s with current config; skipping live Redis test", cfg.RedisAddr())
 	}
 
 	ctx := context.Background()

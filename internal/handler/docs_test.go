@@ -16,7 +16,7 @@ func TestDocsEndpoints(t *testing.T) {
 	cfg := &config.Config{Port: "8080", RateLimitPublicRPM: 100, RateLimitAdminRPM: 50}
 	svc := service.NewProductService(&repository.ProductRepository{}, &repository.VariantRepository{}, nil)
 	h := NewProductHandler(svc)
-	router := SetupRouter(cfg, h, nil)
+	router := SetupRouter(cfg, h, nil, nil)
 
 	t.Run("GET /openapi.json returns valid OpenAPI 3.1 schema", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)

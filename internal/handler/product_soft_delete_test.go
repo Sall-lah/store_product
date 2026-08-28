@@ -15,7 +15,7 @@ func TestProductSoftDeleteRoutes(t *testing.T) {
 	cfg := &config.Config{Port: "8080", RateLimitPublicRPM: 100, RateLimitAdminRPM: 50}
 	svc := service.NewProductService(&repository.ProductRepository{}, &repository.VariantRepository{}, nil)
 	h := NewProductHandler(svc)
-	router := SetupRouter(cfg, h, nil)
+	router := SetupRouter(cfg, h, nil, nil)
 
 	t.Run("Admin DELETE /api/v1/admin/products/{id} requires admin role", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/products/prod-123", nil)

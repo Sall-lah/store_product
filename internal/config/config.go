@@ -28,6 +28,13 @@ type Config struct {
 	KafkaBrokers           []string
 	KafkaTopicOrderEvents  string
 	KafkaConsumerGroup     string
+
+	// Cloudflare R2 object storage credentials and public CDN distribution
+	R2AccountID       string
+	R2AccessKeyID     string
+	R2SecretAccessKey string
+	R2BucketName      string
+	R2PublicBaseURL   string
 }
 
 // Load reads configuration from the environment and optional .env file.
@@ -39,22 +46,35 @@ func Load() (*Config, error) {
 	_ = godotenv.Load()
 
 	cfg := &Config{
-		Port:               getEnv("PORT", "8080"),
-		Environment:        getEnv("ENV", "development"),
-		DatabaseURL:        getEnv("DATABASE_URL", ""),
-		RedisHost:          getEnv("REDIS_HOST", "localhost"),
-		RedisPort:          getEnv("REDIS_PORT", "6379"),
-		RedisPassword:      getEnv("REDIS_PASSWORD", ""),
-		RedisDB:            getEnvAsInt("REDIS_DB", 0),
+		Port:                  getEnv("PORT", "8080"),
+		Environment:           getEnv("ENV", "development"),
+		DatabaseURL:           getEnv("DATABASE_URL", ""),
+		RedisHost:             getEnv("REDIS_HOST", "localhost"),
+		RedisPort:             getEnv("REDIS_PORT", "6379"),
+		RedisPassword:         getEnv("REDIS_PASSWORD", ""),
+		RedisDB:               getEnvAsInt("REDIS_DB", 0),
 		RateLimitPublicRPM:    getEnvAsInt("RATE_LIMIT_PUBLIC_RPM", 120),
 		RateLimitSearchRPM:    getEnvAsInt("RATE_LIMIT_SEARCH_RPM", 60),
 		RateLimitAdminRPM:     getEnvAsInt("RATE_LIMIT_ADMIN_RPM", 30),
 		KafkaBrokers:          getEnvAsSlice("KAFKA_BROKERS", []string{"localhost:9092"}),
 		KafkaTopicOrderEvents: getEnv("KAFKA_TOPIC_ORDER_EVENTS", "order.events"),
 		KafkaConsumerGroup:    getEnv("KAFKA_CONSUMER_GROUP", "store_product_stock_worker"),
+		R2AccountID:           getEnv("R2_ACCOUNT_ID", ""),
+		R2AccessKeyID:         getEnv("R2_ACCESS_KEY_ID", ""),
+		R2SecretAccessKey:     getEnv("R2_SECRET_ACCESS_KEY", ""),
+		R2BucketName:          getEnv("R2_BUCKET_NAME", "store-products"),
+		R2PublicBaseURL:       getEnv("R2_PUBLIC_BASE_URL", "https://cdn.mystore.com"),
 	}
 
 	return cfg, nil
+}
+
+// R2Endpoint formats the Cloudflare S3-compatible API endpoint for this account.
+func (c *Config) R2Endpoint() string {
+	if c.R2AccountID == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://%s.r2.cloudflarestorage.com", c.R2AccountID)
 }
 
 // RedisAddr formats the Redis host and port into a standard connection target.

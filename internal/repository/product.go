@@ -100,9 +100,21 @@ func (r *ProductRepository) ListProducts(ctx context.Context, filter ProductFilt
 
 	query := r.client.Product.FindMany(where...)
 	if filter.IncludeInactive {
-		query = query.With(db.Product.Variants.Fetch())
+		query = query.With(
+			db.Product.Variants.Fetch(),
+			db.Product.Images.Fetch().OrderBy(
+				db.ProductImage.SortOrder.Order(db.SortOrderAsc),
+				db.ProductImage.CreatedAt.Order(db.SortOrderAsc),
+			),
+		)
 	} else {
-		query = query.With(db.Product.Variants.Fetch(db.ProductVariant.IsActive.Equals(true)))
+		query = query.With(
+			db.Product.Variants.Fetch(db.ProductVariant.IsActive.Equals(true)),
+			db.Product.Images.Fetch().OrderBy(
+				db.ProductImage.SortOrder.Order(db.SortOrderAsc),
+				db.ProductImage.CreatedAt.Order(db.SortOrderAsc),
+			),
+		)
 	}
 
 	// Fetch limit + 1 items to determine if a subsequent page exists without a separate COUNT(*) query
@@ -150,6 +162,10 @@ func (r *ProductRepository) GetProductByID(ctx context.Context, id string) (*Pro
 		db.Product.ID.Equals(id),
 	).With(
 		db.Product.Variants.Fetch(db.ProductVariant.IsActive.Equals(true)),
+		db.Product.Images.Fetch().OrderBy(
+			db.ProductImage.SortOrder.Order(db.SortOrderAsc),
+			db.ProductImage.CreatedAt.Order(db.SortOrderAsc),
+		),
 	).Exec(ctx)
 
 	if err != nil {
@@ -173,6 +189,10 @@ func (r *ProductRepository) GetAdminProductByID(ctx context.Context, id string) 
 		db.Product.ID.Equals(id),
 	).With(
 		db.Product.Variants.Fetch(),
+		db.Product.Images.Fetch().OrderBy(
+			db.ProductImage.SortOrder.Order(db.SortOrderAsc),
+			db.ProductImage.CreatedAt.Order(db.SortOrderAsc),
+		),
 	).Exec(ctx)
 
 	if err != nil {
@@ -193,6 +213,10 @@ func (r *ProductRepository) GetProductBySlug(ctx context.Context, slug string) (
 		db.Product.Slug.Equals(slug),
 	).With(
 		db.Product.Variants.Fetch(db.ProductVariant.IsActive.Equals(true)),
+		db.Product.Images.Fetch().OrderBy(
+			db.ProductImage.SortOrder.Order(db.SortOrderAsc),
+			db.ProductImage.CreatedAt.Order(db.SortOrderAsc),
+		),
 	).Exec(ctx)
 
 	if err != nil {

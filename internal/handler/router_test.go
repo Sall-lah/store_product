@@ -16,7 +16,7 @@ func TestHealthCheck(t *testing.T) {
 	cfg := &config.Config{Port: "8080", RateLimitPublicRPM: 100, RateLimitAdminRPM: 50}
 	svc := service.NewProductService(&repository.ProductRepository{}, &repository.VariantRepository{}, nil)
 	h := NewProductHandler(svc)
-	router := SetupRouter(cfg, h, nil)
+	router := SetupRouter(cfg, h, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -41,7 +41,7 @@ func TestAdminRoutesProtection(t *testing.T) {
 	cfg := &config.Config{Port: "8080", RateLimitPublicRPM: 100, RateLimitAdminRPM: 50}
 	svc := service.NewProductService(&repository.ProductRepository{}, &repository.VariantRepository{}, nil)
 	h := NewProductHandler(svc)
-	router := SetupRouter(cfg, h, nil)
+	router := SetupRouter(cfg, h, nil, nil)
 
 	t.Run("Reject Unauthenticated POST /api/v1/admin/products", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/products", nil)

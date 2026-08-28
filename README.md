@@ -103,6 +103,11 @@ cp .env.example .env
 | `KAFKA_BROKERS` | `string` | `localhost:9092` | Comma-delimited Kafka broker bootstrap addresses |
 | `KAFKA_TOPIC_ORDER_EVENTS` | `string` | `order.events` | Kafka topic for order lifecycle events (`created`, `cancelled`, `expired`) |
 | `KAFKA_CONSUMER_GROUP` | `string` | `store_product_stock_worker` | Kafka consumer group identifier for inventory synchronization |
+| `R2_ACCOUNT_ID` | `string` | *(Empty)* | Cloudflare R2 Account ID for S3 endpoint construction |
+| `R2_ACCESS_KEY_ID` | `string` | *(Empty)* | Cloudflare R2 / S3-compatible Access Key ID |
+| `R2_SECRET_ACCESS_KEY` | `string` | *(Empty)* | Cloudflare R2 / S3-compatible Secret Access Key |
+| `R2_BUCKET_NAME` | `string` | `store-products` | Cloudflare R2 target bucket name |
+| `R2_PUBLIC_BASE_URL` | `string` | `https://cdn.mystore.com` | Public CDN base URL or r2.dev subdomain for media delivery |
 
 ---
 
@@ -204,6 +209,11 @@ The microservice embeds its OpenAPI 3.1.0 definition and serves interactive docu
 | `POST` | `/api/v1/products/{id}/variants` | Create product variant | `30 req/min` |
 | `PUT` | `/api/v1/products/{id}/variants/{variantId}` | Update variant price/stock/SKU | `30 req/min` |
 | `DELETE` | `/api/v1/products/{id}/variants/{variantId}` | Delete variant | `30 req/min` |
+| `POST` | `/api/v1/products/{id}/images/presign` | Generate direct-to-R2 presigned upload URL | `30 req/min` |
+| `POST` | `/api/v1/products/{id}/images` | Register uploaded image in catalog | `30 req/min` |
+| `GET` | `/api/v1/products/{id}/images` | List product gallery images | `30 req/min` |
+| `PUT` | `/api/v1/products/{id}/images/{imageId}` | Update image alt text, sort order, primary flag | `30 req/min` |
+| `DELETE` | `/api/v1/products/{id}/images/{imageId}` | Delete image record and purge R2 object | `30 req/min` |
 
 ---
 
@@ -301,11 +311,12 @@ store_product/
 │   ├── cache/                      # Redis client & cache key management
 │   ├── config/                     # Environment configuration loader
 │   ├── db/                         # Prisma Client Go generated queries
-│   ├── handler/                    # HTTP controllers (Product, Docs, Router)
+│   ├── handler/                    # HTTP controllers (Product, Image, Docs, Router)
 │   ├── middleware/                 # CORS, Logger, Recovery, Gateway Auth, Rate Limiter
 │   ├── pkg/                        # Shared utility packages (e.g. cursor pagination)
-│   ├── repository/                 # Data access layer for products & variants
-│   └── service/                    # Business logic & cache invalidation
+│   ├── repository/                 # Data access layer for products, variants & images
+│   ├── service/                    # Business logic, image orchestration & cache invalidation
+│   └── storage/                    # Cloudflare R2 / S3 object storage client
 ├── openspec/                       # OpenSpec specifications & change logs
 ├── .env.example                    # Environment template with defaults
 ├── Dockerfile                      # Multi-stage production container build

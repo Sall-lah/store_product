@@ -18,6 +18,7 @@ import (
 	"github.com/Sall-lah/store_product/internal/handler"
 	"github.com/Sall-lah/store_product/internal/repository"
 	"github.com/Sall-lah/store_product/internal/service"
+	"github.com/Sall-lah/store_product/internal/storage"
 )
 
 func main() {
@@ -55,10 +56,20 @@ func main() {
 	// 4. Wire repository, service, and transport layers (Dependency Injection)
 	productRepo := repository.NewProductRepository(prismaClient)
 	variantRepo := repository.NewVariantRepository(prismaClient)
+	imageRepo := repository.NewImageRepository(prismaClient)
 	eventRepo := repository.NewEventRepository(prismaClient)
 
+	// Initialize Cloudflare R2 storage client
+	r2Client, err := storage.NewR2StorageClient(context.Background(), cfg)
+	if err != nil {
+		log.Printf("[WARN] Error configuring R2 storage client: %v", err)
+	}
+
 	productService := service.NewProductService(productRepo, variantRepo, cacheClient)
+	imageService := service.NewImageService(imageRepo, productRepo, r2Client, cacheClient)
+
 	productHandler := handler.NewProductHandler(productService)
+	imageHandler := handler.NewImageHandler(imageService)
 
 	// 5. Initialize Kafka consumer worker for async inventory events
 	stockEventHandler := event.NewStockEventHandler(variantRepo, eventRepo, productRepo, cacheClient)
@@ -72,7 +83,7 @@ func main() {
 	}()
 
 	// 6. Build HTTP router with route groups and rate limiters
-	router := handler.SetupRouter(cfg, productHandler, cacheClient)
+	router := handler.SetupRouter(cfg, productHandler, imageHandler, cacheClient)
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Port),
