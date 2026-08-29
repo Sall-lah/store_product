@@ -14,6 +14,8 @@ info:
     ### Rate Limiting
     Public and Admin endpoints enforce Redis sliding window rate limits. Response headers include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`.
 servers:
+  - url: ./
+    description: Relative Subpath / Current Gateway Host
   - url: http://localhost:8080
     description: Local Development Server
   - url: /

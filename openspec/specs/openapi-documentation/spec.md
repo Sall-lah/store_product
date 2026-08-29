@@ -2,9 +2,7 @@
 
 ## Purpose
 Provides an authoritative, standardized, and machine-readable OpenAPI 3.1.0 specification for the `store_product` microservice catalog and mutation endpoints.
-
 ## Requirements
-
 ### Requirement: Comprehensive OpenAPI 3.1.0 Specification
 The system SHALL provide an OpenAPI 3.1.0 specification defining all endpoints, query parameters, request bodies, response models, error structures, rate limit headers, and security schemes for the `store_product` microservice.
 
@@ -23,3 +21,11 @@ The system SHALL provide an OpenAPI 3.1.0 specification defining all endpoints, 
 #### Scenario: OpenAPI specification documents Rate Limit Headers
 - **WHEN** inspect response header definitions for public, search, and admin endpoints
 - **THEN** the spec SHALL include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` headers
+
+### Requirement: Relative Server URL Definition
+The OpenAPI 3.1.0 specification SHALL declare a relative server target (`./`) in its `servers` configuration to support reverse proxy and API Gateway subpath prefix execution.
+
+#### Scenario: Specification includes relative server URL
+- **WHEN** a client inspects the `servers` array in the OpenAPI specification
+- **THEN** it SHALL include a server entry with `url: "./"` and description indicating relative gateway host execution
+

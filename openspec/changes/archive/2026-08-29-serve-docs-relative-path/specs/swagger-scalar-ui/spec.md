@@ -1,8 +1,5 @@
-# Swagger and Scalar UI Specification
+## MODIFIED Requirements
 
-## Purpose
-Exposes interactive developer documentation user interfaces (Swagger UI and Scalar UI) and raw schema endpoints bundled directly into the Go microservice binary.
-## Requirements
 ### Requirement: Interactive Swagger and Scalar Documentation Endpoints
 The system SHALL expose HTTP endpoints to serve interactive documentation user interfaces and raw OpenAPI specification files embedded into the application binary, utilizing relative paths (`./openapi.json`) and sub-route spec registration for reverse proxy and gateway prefix compatibility.
 
@@ -21,4 +18,3 @@ The system SHALL expose HTTP endpoints to serve interactive documentation user i
 #### Scenario: Raw OpenAPI YAML retrieval
 - **WHEN** a client performs a `GET` request to `/openapi.yaml`, `/docs/openapi.yaml`, or `/swagger/openapi.yaml`
 - **THEN** the server SHALL respond with `200 OK`, `Content-Type: application/yaml; charset=utf-8`, and return the complete YAML specification
-

@@ -7,6 +7,10 @@
   },
   "servers": [
     {
+      "url": "./",
+      "description": "Relative Subpath / Current Gateway Host"
+    },
+    {
       "url": "http://localhost:8080",
       "description": "Local Development Server"
     },

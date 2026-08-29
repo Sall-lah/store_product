@@ -55,7 +55,7 @@ func (h *DocsHandler) ServeSwaggerUI(w http.ResponseWriter, r *http.Request) {
   <script>
     window.onload = function() {
       window.ui = SwaggerUIBundle({
-        url: "/openapi.json",
+        url: "./openapi.json",
         dom_id: '#swagger-ui',
         deepLinking: true,
         presets: [
@@ -95,7 +95,7 @@ func (h *DocsHandler) ServeScalarUI(w http.ResponseWriter, r *http.Request) {
 <body>
   <script
     id="api-reference"
-    data-url="/openapi.json"
+    data-url="./openapi.json"
     data-configuration='{"theme":"purple","layout":"modern"}'
     src="https://cdn.jsdelivr.net/npm/@scalar/api-reference">
   </script>

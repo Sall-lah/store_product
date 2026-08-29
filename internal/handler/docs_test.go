@@ -69,7 +69,7 @@ func TestDocsEndpoints(t *testing.T) {
 		}
 	})
 
-	t.Run("GET /swagger renders Swagger UI HTML", func(t *testing.T) {
+	t.Run("GET /swagger renders Swagger UI HTML with relative spec path", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/swagger", nil)
 		rec := httptest.NewRecorder()
 
@@ -88,9 +88,12 @@ func TestDocsEndpoints(t *testing.T) {
 		if !strings.Contains(body, "swagger-ui") {
 			t.Errorf("expected Swagger UI body to contain swagger-ui DOM container")
 		}
+		if !strings.Contains(body, `url: "./openapi.json"`) {
+			t.Errorf("expected Swagger UI body to use relative spec URL './openapi.json'")
+		}
 	})
 
-	t.Run("GET /docs renders Scalar UI HTML", func(t *testing.T) {
+	t.Run("GET /docs renders Scalar UI HTML with relative spec path", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/docs", nil)
 		rec := httptest.NewRecorder()
 
@@ -108,6 +111,47 @@ func TestDocsEndpoints(t *testing.T) {
 		body := rec.Body.String()
 		if !strings.Contains(body, "@scalar/api-reference") {
 			t.Errorf("expected Scalar UI body to contain @scalar/api-reference")
+		}
+		if !strings.Contains(body, `data-url="./openapi.json"`) {
+			t.Errorf("expected Scalar UI body to use relative spec URL 'data-url=\"./openapi.json\"'")
+		}
+	})
+
+	t.Run("GET /docs/openapi.json resolves OpenAPI schema under docs sub-route", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/docs/openapi.json", nil)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", rec.Code)
+		}
+
+		var spec map[string]interface{}
+		if err := json.NewDecoder(rec.Body).Decode(&spec); err != nil {
+			t.Fatalf("failed to decode spec: %v", err)
+		}
+		if spec["openapi"] != "3.1.0" {
+			t.Errorf("expected openapi 3.1.0, got %v", spec["openapi"])
+		}
+	})
+
+	t.Run("GET /swagger/openapi.json resolves OpenAPI schema under swagger sub-route", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/swagger/openapi.json", nil)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", rec.Code)
+		}
+
+		var spec map[string]interface{}
+		if err := json.NewDecoder(rec.Body).Decode(&spec); err != nil {
+			t.Fatalf("failed to decode spec: %v", err)
+		}
+		if spec["openapi"] != "3.1.0" {
+			t.Errorf("expected openapi 3.1.0, got %v", spec["openapi"])
 		}
 	})
 }

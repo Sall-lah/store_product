@@ -24,10 +24,24 @@ func SetupRouter(cfg *config.Config, h *ProductHandler, imgHandler *ImageHandler
 	docsHandler := NewDocsHandler()
 	r.Get("/openapi.json", docsHandler.ServeOpenAPIJSON)
 	r.Get("/openapi.yaml", docsHandler.ServeOpenAPIYAML)
-	r.Get("/swagger", docsHandler.ServeSwaggerUI)
-	r.Get("/swagger/*", docsHandler.ServeSwaggerUI)
+
+	// Scalar UI & sub-route specs for relative path resolution
+	r.Route("/docs", func(sub chi.Router) {
+		sub.Get("/openapi.json", docsHandler.ServeOpenAPIJSON)
+		sub.Get("/openapi.yaml", docsHandler.ServeOpenAPIYAML)
+		sub.Get("/", docsHandler.ServeScalarUI)
+		sub.Get("/*", docsHandler.ServeScalarUI)
+	})
 	r.Get("/docs", docsHandler.ServeScalarUI)
-	r.Get("/docs/*", docsHandler.ServeScalarUI)
+
+	// Swagger UI & sub-route specs for relative path resolution
+	r.Route("/swagger", func(sub chi.Router) {
+		sub.Get("/openapi.json", docsHandler.ServeOpenAPIJSON)
+		sub.Get("/openapi.yaml", docsHandler.ServeOpenAPIYAML)
+		sub.Get("/", docsHandler.ServeSwaggerUI)
+		sub.Get("/*", docsHandler.ServeSwaggerUI)
+	})
+	r.Get("/swagger", docsHandler.ServeSwaggerUI)
 
 	// API v1 Namespace
 	r.Route("/api/v1", func(api chi.Router) {
