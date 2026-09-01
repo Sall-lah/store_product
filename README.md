@@ -1,331 +1,381 @@
-# Store Product Microservice
+# Store Product Microservice (`store_product`)
 
-High-performance e-commerce Product Catalog and Variant Management Microservice. Built with **Go (Chi router)**, **PostgreSQL (Prisma Client Go)**, and **Redis**.
+[![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Router](https://img.shields.io/badge/Router-Chi%20v5-blue)](https://github.com/go-chi/chi)
+[![Database](https://img.shields.io/badge/Database-PostgreSQL-336791?logo=postgresql)](https://www.postgresql.org/)
+[![ORM](https://img.shields.io/badge/ORM-Prisma%20Go%20Client-2D3748?logo=prisma)](https://github.com/steebchen/prisma-client-go)
+[![Event Streaming](https://img.shields.io/badge/Streaming-Apache%20Kafka-231F20?logo=apachekafka)](https://kafka.apache.org/)
+[![Cache & Rate Limit](https://img.shields.io/badge/Rate%20Limit-Redis-DC382D?logo=redis)](https://redis.io/)
+[![Storage](https://img.shields.io/badge/Storage-Cloudflare%20R2-F38020?logo=cloudflare)](https://developers.cloudflare.com/r2/)
+
+A production-grade, event-driven Product Catalog, Inventory, and Media Management microservice built in Go. It manages products, variants, and gallery assets, synchronizes stock availability asynchronously from Kafka order events with database idempotency, serves cached catalog listings via Keyset Cursor pagination, and defends endpoints against volumetric abuse with Redis sliding-window rate limiting.
 
 ---
 
-## Architecture Overview
+## ?? Table of Contents
 
-The `store_product` service operates as a backend microservice within an e-commerce ecosystem. It leverages API Gateway offloading for authentication and utilizes Redis for caching and sliding-window rate limiting.
+- [Architecture Overview](#-architecture-overview)
+- [Key Features](#-key-features)
+- [Technology Stack](#-technology-stack)
+- [Repository Structure](#-repository-structure)
+- [Prerequisites & Environment Configuration](#-prerequisites--environment-configuration)
+- [Database Setup & Prisma ORM](#-database-setup--prisma-orm)
+- [Getting Started (Local Development)](#-getting-started-local-development)
+- [API Endpoints & Documentation](#-api-endpoints--documentation)
+- [Kafka Event Pipeline & Inventory Synchronization](#-kafka-event-pipeline--inventory-synchronization)
+- [Redis Caching & Rate Limiting Rules](#-redis-caching--rate-limiting-rules)
+- [Object Storage & Image Upload Workflow](#-object-storage--image-upload-workflow)
+- [Testing](#-testing)
+- [Docker Deployment](#-docker-deployment)
+
+---
+
+## ?? Architecture Overview
 
 ```mermaid
 flowchart TD
-    Client([Client / Web App]) --> Gateway[API Gateway / store_gateway]
-    OrderService([Order Service]) -->|Publishes order.events| Kafka[(Kafka Message Broker)]
+    Client[Client / Frontend] -->|HTTP Requests| Gateway[API Gateway / store_gateway]
+    Gateway -->|Forward with X-User-Id / X-User-Role| Router[Chi HTTP Router]
     
-    subgraph GatewayOffloading [API Gateway Offloading]
-        Gateway -->|Verifies JWT & Injects X-User-Role / X-User-Id| StoreProduct[store_product Service :8080]
+    subgraph store_product ["Store Product Service"]
+        Router --> Middleware[RateLimit, Auth & CORS Middleware]
+        Middleware --> Handlers[HTTP Handlers: Product, Admin, Image, Docs, Health]
+        Handlers --> ProductService[Product Service]
+        Handlers --> ImageService[Image Service]
+        
+        ProductService --> ProductRepo[Product Repository]
+        ProductService --> VariantRepo[Variant Repository]
+        ImageService --> ImageRepo[Image Repository]
+        ImageService --> R2Client[Cloudflare R2 Client]
+        
+        StockConsumer[Kafka Stock Consumer Worker] --> StockHandler[Stock Event Handler]
+        StockHandler --> VariantRepo
+        StockHandler --> EventRepo[Event Idempotency Repo]
+        StockHandler --> ProductRepo
     end
 
-    subgraph EventStreaming [Event Consumer Worker]
-        Kafka -->|Consumes order.created / cancelled / expired| KafkaWorker[Kafka Consumer Loop]
-        KafkaWorker --> StockHandler[Stock Event Handler]
-    end
-
-    subgraph ServiceInternals [Store Product Internals]
-        StoreProduct --> Router[Chi Router & Middlewares]
-        Router --> RateLimit[Redis Sliding Window Rate Limiter]
-        Router --> CacheLayer[Redis Cache Layer]
-        Router --> Service[Service Layer]
-        Service --> Repo[Repository Layer]
-        StockHandler --> Repo
-        StockHandler --> CacheLayer
-    end
-
-    subgraph Persistence [Data Stores]
-        CacheLayer <--> Redis[(Redis Cache & Rate Limits)]
-        RateLimit <--> Redis
-        Repo <--> DB[(PostgreSQL Database)]
-    end
-
-    subgraph Documentation [Embedded Developer Docs]
-        StoreProduct --> ScalarUI["Scalar UI (/docs)"]
-        StoreProduct --> SwaggerUI["Swagger UI (/swagger)"]
-        StoreProduct --> SpecEndpoints["OpenAPI 3.1 (/openapi.json, .yaml)"]
-    end
+    ProductRepo -->|Prisma Client| Postgres[(PostgreSQL DB)]
+    VariantRepo -->|Prisma Client| Postgres
+    ImageRepo -->|Prisma Client| Postgres
+    EventRepo -->|Prisma Client| Postgres
+    
+    Middleware -->|Sliding Window Counter| Redis[(Redis)]
+    ProductService -->|Read/Write Cache| Redis
+    StockHandler -->|Invalidate Product Lists & Details| Redis
+    
+    R2Client -->|Presign PUT / Delete Objects| CloudflareR2[(Cloudflare R2 Storage)]
+    KafkaIn[Apache Kafka: order.events] -->|order.created / order.cancelled / order.expired| StockConsumer
 ```
 
-### Core Design Principles
+### Event-Driven Inventory Synchronization Flow
 
-1. **API Gateway Offloading**: Admin mutation endpoints enforce verified headers (`X-User-Role`, `X-User-Id`) injected upstream by the API Gateway (`store_gateway`), avoiding redundant JWT decoding across microservices.
-2. **Event-Driven Inventory Synchronization**: Consumes Kafka topic `order.events` (`order.created`, `order.cancelled`, `order.expired`) to execute atomic stock deductions and restocking with database idempotency tracking (`processed_events`).
-3. **Multi-layer Redis Caching**: High-traffic public catalog queries and product detail lookups are cached with automatic multi-level invalidation on product or variant updates.
-4. **Sliding-Window Rate Limiting**: In-memory Redis sliding-window algorithm tracks and enforces request quotas across public catalog, search, and admin endpoints with standard `X-RateLimit-*` headers.
+```mermaid
+stateDiagram-v2
+    [*] --> InboundOrderEvent: Kafka Message (order.events)
+    InboundOrderEvent --> IdempotencyCheck: Verify Event ID in ProcessedEvent Ledger
+    IdempotencyCheck --> SkipDuplicate: Event Already Processed
+    SkipDuplicate --> [*]
+    
+    IdempotencyCheck --> DispatchMutation: New Event
+    
+    state DispatchMutation {
+        [*] --> CheckType
+        CheckType --> DecrementStock: order.created / order.placed
+        CheckType --> RestockStock: order.cancelled / order.expired
+        DecrementStock --> PurgeCache: Atomic DB Stock Deduction
+        RestockStock --> PurgeCache: Atomic DB Stock Restock
+    }
+    
+    PurgeCache --> InvalidateRedis: Purge product:detail, product:slug & product:list:*
+    InvalidateRedis --> MarkProcessed: Record eventId in processed_events DB Table
+    MarkProcessed --> [*]: Commit Kafka Offset
+```
+
+---
+
+## ?? Key Features
+
+1. **Event-Driven Inventory Synchronization**: Asynchronously consumes `order.events` (`order.created`, `order.cancelled`, `order.expired`) to execute atomic stock deductions and restocking with strict database idempotency tracking (`ProcessedEvent` ledger).
+2. **Direct-to-R2 Presigned Media Uploads**: Facilitates secure, high-throughput image uploads via Cloudflare R2 presigned PUT URLs, eliminating server memory overhead during file transfers.
+3. **High-Performance Multi-Tiered Redis Caching**: Caches public catalog listings and detailed product representations with targeted cache key invalidation on catalog mutations or stock adjustments.
+4. **Resilient Sliding-Window Rate Limiting**: Redis sliding-window counters protect public catalog (`120 rpm`), search (`60 rpm`), and admin mutation (`30 rpm`) endpoints with an integrated **fail-open** circuit breaker.
 5. **Keyset Cursor Pagination**: Public product listings utilize O(1) keyset cursor pagination (`nextCursor`, `hasMore`) for stable performance at scale.
-6. **Self-Documenting Binary**: OpenAPI 3.1.0 specifications and interactive documentation interfaces (Scalar UI and Swagger UI) are embedded directly into the Go application binary.
+6. **API Gateway Offloading Authentication**: Admin endpoints strictly enforce verified headers (`X-User-Role: admin`, `X-User-Id`) injected upstream by `store_gateway`.
+7. **Embedded Interactive Documentation**: OpenAPI 3.1 specifications rendered live via **Scalar UI** (`/docs`) and **Swagger UI** (`/swagger`).
 
 ---
 
-## Tech Stack
+## ?? Technology Stack
 
-- **Language**: Go 1.22+
-- **HTTP Framework**: [go-chi/chi/v5](https://github.com/go-chi/chi)
-- **Database & ORM**: PostgreSQL / Supabase via [Prisma Client Go](https://github.com/steebchen/prisma-client-go)
-- **Cache & Rate Limiting**: [go-redis/v9](https://github.com/redis/go-redis)
+- **Language**: Go 1.26+
+- **HTTP Routing**: [Chi v5](https://github.com/go-chi/chi) with CORS, Logger, & Recovery middlewares
+- **ORM & Data Layer**: [Prisma Client Go](https://github.com/steebchen/prisma-client-go) with PostgreSQL / Supabase
 - **Event Streaming**: [segmentio/kafka-go](https://github.com/segmentio/kafka-go)
-- **API Documentation**: OpenAPI 3.1.0, [Scalar UI](https://scalar.com), and [Swagger UI](https://swagger.io/tools/swagger-ui/)
+- **Caching & Rate Limiting**: [go-redis/v9](https://github.com/redis/go-redis)
+- **Object Storage**: AWS SDK for Go v2 (Cloudflare R2 S3-compatible API)
+- **API Documentation**: OpenAPI 3.1, [Scalar UI](https://scalar.com), [Swagger UI](https://swagger.io/tools/swagger-ui/)
+- **Containerization**: Multi-stage Alpine Linux Dockerfile
 
 ---
 
-## Prerequisites
+## ?? Repository Structure
 
-- **Go**: `1.22` or later
-- **PostgreSQL**: `14` or later (or Supabase instance)
-- **Redis**: `7.0` or later (default port `6379`)
-- **Docker**: (Optional) For containerized deployment
+```
+store_product/
++-- cmd/
+�   +-- server/
+�       +-- main.go                 # Application bootstrap & dependency injection
++-- docs/
+�   +-- docs.go                     # Go embed directives for static OpenAPI specs
+�   +-- openapi.json                # OpenAPI 3.1 specification (JSON format)
+�   +-- openapi.yaml                # OpenAPI 3.1 specification (YAML format)
++-- internal/
+�   +-- cache/                      # Redis client & cache key management
+�   +-- config/                     # Environment variable parsing and validation
+�   +-- db/                         # Generated Prisma Client Go engine & models
+�   +-- event/                      # Kafka consumer & stock event handlers
+�   +-- handler/                    # HTTP controllers (Product, Admin, Image, Docs, Router)
+�   +-- middleware/                 # Auth guard, CORS, Logger, Recovery, Rate Limiter
+�   +-- pkg/                        # Keyset cursor pagination and shared utilities
+�   +-- repository/                 # PostgreSQL data access layer (Product, Variant, Image, Event)
+�   +-- service/                    # Business logic, image orchestration & cache invalidation
+�   +-- storage/                    # Cloudflare R2 / S3-compatible object storage client
++-- openspec/                       # OpenSpec specifications and planning artifacts
++-- prisma/
+�   +-- schema.prisma               # Prisma schema definition
++-- Dockerfile                      # Multi-stage container build definition
++-- go.mod / go.sum                 # Go module definitions
++-- .env.example                    # Environment variable configuration template
+```
 
 ---
 
-## Environment Configuration
+## ?? Prerequisites & Environment Configuration
 
-Configuration is loaded from environment variables (or an optional `.env` file via `godotenv`).
+### Prerequisites
+- **Go**: Version 1.26 or higher
+- **PostgreSQL**: Version 14 or higher (or Supabase instance)
+- **Apache Kafka**: Version 3.x+
+- **Redis**: Version 7.x+
+- **Cloudflare R2 Bucket**: S3-compatible API credentials (or AWS S3)
+- **Prisma CLI**: For schema migrations (`npm install -g prisma`)
 
-Copy the template to create your local `.env`:
+### Configuration Options (`.env`)
 
+Copy the example configuration file:
 ```bash
 cp .env.example .env
 ```
 
-### Configuration Variables
-
 | Variable | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `PORT` | `string` | `8080` | HTTP server listening port |
+| `PORT` | `string` | `8080` | HTTP port for the microservice |
 | `ENV` | `string` | `development` | Runtime environment (`development`, `production`, `test`) |
 | `DATABASE_URL` | `string` | *(Required)* | PostgreSQL connection URI |
 | `REDIS_HOST` | `string` | `localhost` | Redis server hostname or IP address |
 | `REDIS_PORT` | `string` | `6379` | Redis server port |
-| `REDIS_PASSWORD` | `string` | *(Empty)* | Redis authentication password |
+| `REDIS_PASSWORD` | `string` | `""` | Optional password for Redis authentication |
 | `REDIS_DB` | `int` | `0` | Redis logical database index |
 | `RATE_LIMIT_PUBLIC_RPM` | `int` | `120` | Requests per minute for public catalog queries |
 | `RATE_LIMIT_SEARCH_RPM` | `int` | `60` | Requests per minute for search endpoints |
 | `RATE_LIMIT_ADMIN_RPM` | `int` | `30` | Requests per minute for admin mutation endpoints |
-| `KAFKA_BROKERS` | `string` | `localhost:9092` | Comma-delimited Kafka broker bootstrap addresses |
-| `KAFKA_TOPIC_ORDER_EVENTS` | `string` | `order.events` | Kafka topic for order lifecycle events (`created`, `cancelled`, `expired`) |
-| `KAFKA_CONSUMER_GROUP` | `string` | `store_product_stock_worker` | Kafka consumer group identifier for inventory synchronization |
-| `R2_ACCOUNT_ID` | `string` | *(Empty)* | Cloudflare R2 Account ID for S3 endpoint construction |
-| `R2_ACCESS_KEY_ID` | `string` | *(Empty)* | Cloudflare R2 / S3-compatible Access Key ID |
-| `R2_SECRET_ACCESS_KEY` | `string` | *(Empty)* | Cloudflare R2 / S3-compatible Secret Access Key |
+| `KAFKA_BROKERS` | `string` | `localhost:9092` | Comma-separated list of Kafka broker addresses |
+| `KAFKA_TOPIC_ORDER_EVENTS`| `string` | `order.events` | Kafka topic for order lifecycle events |
+| `KAFKA_CONSUMER_GROUP` | `string` | `store_product_stock_worker` | Kafka consumer group identifier |
+| `R2_ACCOUNT_ID` | `string` | `""` | Cloudflare R2 Account ID for endpoint construction |
+| `R2_ACCESS_KEY_ID` | `string` | `""` | Cloudflare R2 / S3 Access Key ID |
+| `R2_SECRET_ACCESS_KEY` | `string` | `""` | Cloudflare R2 / S3 Secret Access Key |
 | `R2_BUCKET_NAME` | `string` | `store-products` | Cloudflare R2 target bucket name |
-| `R2_PUBLIC_BASE_URL` | `string` | `https://cdn.mystore.com` | Public CDN base URL or r2.dev subdomain for media delivery |
+| `R2_PUBLIC_BASE_URL` | `string` | `https://cdn.mystore.com` | Public CDN base URL for media delivery |
 
 ---
 
-## Quick Start & Local Development
+## ?? Database Setup & Prisma ORM
 
-### 1. Clone & Install Dependencies
+The project uses Prisma schema (`prisma/schema.prisma`) to maintain models and generate the Go client into `internal/db`.
 
-```bash
-git clone https://github.com/Sall-lah/store_product.git
-cd store_product
-go mod download
-```
+1. **Push Schema to PostgreSQL Database**:
+   ```bash
+   npx prisma db push --schema=./prisma/schema.prisma
+   ```
 
-### 2. Configure Environment
-
-Create `.env` based on `.env.example`:
-
-```bash
-cp .env.example .env
-```
-
-Ensure your PostgreSQL database and Redis instances are running and update `DATABASE_URL` and `REDIS_HOST`/`REDIS_PORT` accordingly.
-
-### 3. Run the Service
-
-```bash
-go run cmd/server/main.go
-```
-
-The server starts on `http://localhost:8080`.
-
-### 4. Health Check Verification
-
-```bash
-curl http://localhost:8080/health
-```
-
-Expected response:
-```json
-{
-  "status": "healthy",
-  "timestamp": "2026-08-19T18:00:00Z"
-}
-```
+2. **Generate Go Client**:
+   ```bash
+   go run github.com/steebchen/prisma-client-go generate --schema=./prisma/schema.prisma
+   ```
 
 ---
 
-## Docker Deployment
+## ?? Getting Started (Local Development)
 
-The service includes a production-ready, multi-stage `Dockerfile` producing a minimal, secure Alpine Linux container.
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/Sall-lah/store_product.git
+   cd store_product
+   ```
 
-### Build Docker Image
+2. **Install Go Dependencies**:
+   ```bash
+   go mod download
+   ```
 
-```bash
-docker build -t store_product:latest .
-```
+3. **Configure Environment Variables**:
+   ```bash
+   cp .env.example .env
+   # Edit .env to set your DATABASE_URL, REDIS_HOST, KAFKA_BROKERS, and R2 credentials
+   ```
 
-### Run Container
+4. **Run the Service**:
+   ```bash
+   go run cmd/server/main.go
+   ```
 
-```bash
-docker run -d \
-  --name store_product \
-  -p 8080:8080 \
-  --env-file .env \
-  store_product:latest
-```
+   The service will start listening on `http://localhost:8080`.
+
+5. **Health Check Verification**:
+   ```bash
+   curl http://localhost:8080/health
+   ```
 
 ---
 
-## Interactive API Documentation
+## ?? API Endpoints & Documentation
 
-The microservice embeds its OpenAPI 3.1.0 definition and serves interactive documentation user interfaces directly:
+Interactive API documentation is embedded directly in the binary:
+- **Scalar UI** *(Modern API Reference)*: [http://localhost:8080/docs](http://localhost:8080/docs)
+- **Swagger UI**: [http://localhost:8080/swagger](http://localhost:8080/swagger)
+- **OpenAPI 3.1 Specs**: [http://localhost:8080/openapi.json](http://localhost:8080/openapi.json) or `/openapi.yaml`
 
-- **Scalar UI** *(Recommended modern UI)*: [`http://localhost:8080/docs`](http://localhost:8080/docs)
-- **Swagger UI**: [`http://localhost:8080/swagger`](http://localhost:8080/swagger)
-- **OpenAPI 3.1 JSON Specification**: [`http://localhost:8080/openapi.json`](http://localhost:8080/openapi.json)
-- **OpenAPI 3.1 YAML Specification**: [`http://localhost:8080/openapi.yaml`](http://localhost:8080/openapi.yaml)
+### Endpoint Catalog
+
+| Group | Method | Path | Auth / Headers | Rate Limit | Description |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Health** | `GET` | `/health` | None | Unlimited | Service & database liveness probe |
+| **Catalog** | `GET` | `/api/v1/products` | None | `120 req/min` | List products with keyset cursor pagination & filters |
+| **Catalog** | `GET` | `/api/v1/products/{id}` | None | `120 req/min` | Get single product detail by UUID |
+| **Catalog** | `GET` | `/api/v1/products/slug/{slug}` | None | `120 req/min` | Get single product detail by URL slug |
+| **Admin Product** | `GET` | `/api/v1/admin/products` | `X-User-Role: admin` | `30 req/min` | Backoffice list all products (including inactive) |
+| **Admin Product** | `GET` | `/api/v1/admin/products/{id}` | `X-User-Role: admin` | `30 req/min` | Backoffice get product details with variants & gallery |
+| **Admin Product** | `POST` | `/api/v1/admin/products` | `X-User-Role: admin` | `30 req/min` | Create a new product entry |
+| **Admin Product** | `PUT` | `/api/v1/admin/products/{id}` | `X-User-Role: admin` | `30 req/min` | Update existing product details |
+| **Admin Product** | `DELETE` | `/api/v1/admin/products/{id}` | `X-User-Role: admin` | `30 req/min` | Delete product and cascade delete variants & images |
+| **Admin Variant** | `POST` | `/api/v1/admin/products/{id}/variants` | `X-User-Role: admin` | `30 req/min` | Create a product SKU variant with stock & price |
+| **Admin Variant** | `PUT` | `/api/v1/admin/products/{id}/variants/{variantId}` | `X-User-Role: admin` | `30 req/min` | Update SKU variant price, stock, size, or color |
+| **Admin Variant** | `DELETE` | `/api/v1/admin/products/{id}/variants/{variantId}` | `X-User-Role: admin` | `30 req/min` | Delete product variant |
+| **Admin Media** | `POST` | `/api/v1/admin/products/{id}/images/presign` | `X-User-Role: admin` | `30 req/min` | Generate direct-to-R2 presigned PUT upload URL |
+| **Admin Media** | `POST` | `/api/v1/admin/products/{id}/images` | `X-User-Role: admin` | `30 req/min` | Register uploaded R2 image in database catalog |
+| **Admin Media** | `GET` | `/api/v1/admin/products/{id}/images` | `X-User-Role: admin` | `30 req/min` | List product gallery images |
+| **Admin Media** | `PUT` | `/api/v1/admin/products/{id}/images/{imageId}` | `X-User-Role: admin` | `30 req/min` | Update image alt text, sort order, or primary flag |
+| **Admin Media** | `DELETE` | `/api/v1/admin/products/{id}/images/{imageId}` | `X-User-Role: admin` | `30 req/min` | Delete image record and purge object from R2 |
 
 ---
 
-## API Endpoints Reference
+## ?? Kafka Event Pipeline & Inventory Synchronization
 
-### Public Catalog Endpoints
+The service consumes order lifecycle events to maintain real-time inventory levels without synchronous coupling between microservices.
 
-| Method | Path | Description | Rate Limit |
+### Inbound Consumer Configuration
+
+- **Kafka Topic**: `order.events` (configured via `KAFKA_TOPIC_ORDER_EVENTS`)
+- **Consumer Group**: `store_product_stock_worker` (configured via `KAFKA_CONSUMER_GROUP`)
+
+### Event Schemas & Actions
+
+| Event Type | Trigger Condition | Action in `store_product` | Cache Invalidation |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/health` | Liveness health check probe | Unlimited |
-| `GET` | `/api/v1/products` | List products with keyset pagination and filtering | `120 req/min` |
-| `GET` | `/api/v1/products/{id}` | Get product details by UUID | `120 req/min` |
-| `GET` | `/api/v1/products/slug/{slug}` | Get product details by URL slug | `120 req/min` |
+| `order.created` / `order.placed` | Customer places order | Atomically decrements variant `stock` in PostgreSQL | Purges `product:detail:<id>`, `product:slug:<slug>`, and `product:list:*` |
+| `order.cancelled` / `order.canceled` | Order cancelled by user/admin | Atomically increments (restocks) variant `stock` in PostgreSQL | Purges `product:detail:<id>`, `product:slug:<slug>`, and `product:list:*` |
+| `order.expired` | Payment window timed out | Atomically increments (restocks) variant `stock` in PostgreSQL | Purges `product:detail:<id>`, `product:slug:<slug>`, and `product:list:*` |
 
-### Admin Mutation Endpoints (Requires Gateway Auth)
+### Idempotency Guarantee (`processed_events`)
 
-| Method | Path | Description | Rate Limit |
+To defend against duplicate message delivery from Kafka's at-least-once guarantee, each event ID is verified against the `ProcessedEvent` table before applying mutations. Upon successful stock update, the event ID and timestamp are recorded within the same transaction.
+
+---
+
+## ?? Redis Caching & Rate Limiting Rules
+
+### Caching Strategy
+- **Product Detail**: Cached under `product:detail:<id>` and `product:slug:<slug>` with TTL.
+- **Product Lists**: Keyset cursor paginated queries cached under `product:list:<hash>`.
+- **Targeted Cache Invalidation**: Catalog updates, variant mutations, or Kafka inventory sync events trigger automatic Redis cache purging.
+
+### Rate Limiting Policies
+
+| Scope / Route Group | Limit | Window | Key Strategy |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/api/v1/products` | Create a new product | `30 req/min` |
-| `PUT` | `/api/v1/products/{id}` | Update existing product details | `30 req/min` |
-| `DELETE` | `/api/v1/products/{id}` | Delete product and its variants | `30 req/min` |
-| `POST` | `/api/v1/products/{id}/variants` | Create product variant | `30 req/min` |
-| `PUT` | `/api/v1/products/{id}/variants/{variantId}` | Update variant price/stock/SKU | `30 req/min` |
-| `DELETE` | `/api/v1/products/{id}/variants/{variantId}` | Delete variant | `30 req/min` |
-| `POST` | `/api/v1/products/{id}/images/presign` | Generate direct-to-R2 presigned upload URL | `30 req/min` |
-| `POST` | `/api/v1/products/{id}/images` | Register uploaded image in catalog | `30 req/min` |
-| `GET` | `/api/v1/products/{id}/images` | List product gallery images | `30 req/min` |
-| `PUT` | `/api/v1/products/{id}/images/{imageId}` | Update image alt text, sort order, primary flag | `30 req/min` |
-| `DELETE` | `/api/v1/products/{id}/images/{imageId}` | Delete image record and purge R2 object | `30 req/min` |
+| **Public Catalog (`/api/v1/products/*`)** | 120 req | 1 minute | Client IP |
+| **Catalog Search** | 60 req | 1 minute | Client IP |
+| **Admin Operations (`/api/v1/admin/*`)** | 30 req | 1 minute | `X-User-Id` or Client IP |
+
+### Resilience & Degraded Headers
+- **Fail-Open Policy**: If Redis is unreachable or experiences latency spikes, requests pass through uninterrupted to avoid taking down the product catalog.
+- **Response Headers**:
+  - `X-RateLimit-Limit`: Maximum requests permitted within the window.
+  - `X-RateLimit-Remaining`: Remaining request quota.
+  - `X-RateLimit-Reset`: Unix timestamp when quota replenishes.
 
 ---
 
-## Gateway Offloading Authentication
+## ?? Object Storage & Image Upload Workflow
 
-Admin endpoints require authenticated headers injected by the upstream API Gateway (`store_gateway`):
+To avoid piping heavy image binaries through the application server, media uploads follow a 3-tier presigned workflow:
 
-- `X-User-Role`: Must match `admin` (case-insensitive, e.g., `admin`, `ADMIN`, `Admin`).
-- `X-User-Id`: Optional identifier of the authenticated user (e.g. `usr_admin_001`).
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin as Admin Client
+    participant Svc as store_product
+    participant R2 as Cloudflare R2
+    participant DB as PostgreSQL DB
 
-If `X-User-Role` is missing or invalid, the service returns `401 Unauthorized` / `403 Forbidden`.
-
-### Example Admin Mutation Request
-
-```bash
-curl -X POST http://localhost:8080/api/v1/products \
-  -H "Content-Type: application/json" \
-  -H "X-User-Role: admin" \
-  -H "X-User-Id: usr_admin_001" \
-  -d '{
-    "name": "Wireless Noise-Canceling Headphones",
-    "slug": "wireless-noise-canceling-headphones",
-    "description": "High-fidelity audio with active noise cancellation.",
-    "category": "Electronics",
-    "basePrice": 24999
-  }'
+    Admin->>Svc: POST /api/v1/admin/products/{id}/images/presign
+    Note over Svc: Generates unique R2 key & presigned PUT URL
+    Svc-->>Admin: Returns { uploadUrl, r2Key, publicUrl }
+    
+    Admin->>R2: HTTP PUT (Binary Image Payload) directly to uploadUrl
+    R2-->>Admin: 200 OK (Upload Complete)
+    
+    Admin->>Svc: POST /api/v1/admin/products/{id}/images (r2Key, altText, isPrimary)
+    Svc->>DB: Persist ProductImage record
+    Svc-->>Admin: 201 Created (Image Registered)
 ```
 
 ---
 
-## Keyset Cursor Pagination
+## ?? Testing
 
-The `/api/v1/products` endpoint uses cursor-based pagination for stable O(1) database queries.
-
-### Query Parameters
-
-| Parameter | Type | Description |
-| :--- | :--- | :--- |
-| `cursor` | `string` | Base64-encoded cursor token from previous `pageInfo.nextCursor` |
-| `limit` | `int` | Number of items per page (default `20`, max `100`) |
-| `category` | `string` | Filter by product category |
-| `min_price` | `int` | Minimum price filter (in smallest currency unit / cents) |
-| `max_price` | `int` | Maximum price filter (in smallest currency unit / cents) |
-| `search` | `string` | Case-insensitive title and description keyword search |
-
-### Example Paginated Response
-
-```json
-{
-  "data": [
-    {
-      "id": "prod_01h8x4k2a9",
-      "name": "Wireless Noise-Canceling Headphones",
-      "slug": "wireless-noise-canceling-headphones",
-      "category": "Electronics",
-      "basePrice": 24999,
-      "variants": []
-    }
-  ],
-  "pageInfo": {
-    "hasMore": true,
-    "nextCursor": "ZXlKaGJHY2lPaUpTVXpVeE1pSXNJblI1Y0NJNklrcFhWQ0o5"
-  }
-}
-```
-
----
-
-## Testing
-
-Execute test suites using the standard Go test runner:
+Execute unit and integration test suites:
 
 ```bash
-# Run all unit and integration tests
+# Run all test packages
 go test -v ./...
 
-# Run tests with code coverage
-go test -v -cover ./...
+# Run test suite with race detector and code coverage
+go test -race -cover ./...
 ```
 
 ---
 
-## Project Structure
+## ?? Docker Deployment
 
-```text
-store_product/
-├── cmd/
-│   └── server/
-│       └── main.go                 # Application bootstrap & dependency injection
-├── docs/
-│   ├── docs.go                     # Go embed directives for static specs
-│   ├── openapi.json                # OpenAPI 3.1.0 JSON specification
-│   └── openapi.yaml                # OpenAPI 3.1.0 YAML specification
-├── internal/
-│   ├── cache/                      # Redis client & cache key management
-│   ├── config/                     # Environment configuration loader
-│   ├── db/                         # Prisma Client Go generated queries
-│   ├── handler/                    # HTTP controllers (Product, Image, Docs, Router)
-│   ├── middleware/                 # CORS, Logger, Recovery, Gateway Auth, Rate Limiter
-│   ├── pkg/                        # Shared utility packages (e.g. cursor pagination)
-│   ├── repository/                 # Data access layer for products, variants & images
-│   ├── service/                    # Business logic, image orchestration & cache invalidation
-│   └── storage/                    # Cloudflare R2 / S3 object storage client
-├── openspec/                       # OpenSpec specifications & change logs
-├── .env.example                    # Environment template with defaults
-├── Dockerfile                      # Multi-stage production container build
-├── go.mod                          # Go module dependencies
-└── README.md                       # Project documentation
-```
+A production-ready, multi-stage Alpine Dockerfile is included:
 
----
+1. **Build Container Image**:
+   ```bash
+   docker build -t store_product:latest .
+   ```
 
-## License
+2. **Run Container**:
+   ```bash
+   docker run -d \
+     --name store_product \
+     -p 8080:8080 \
+     --env-file .env \
+     store_product:latest
+   ```
 
-This project is licensed under the MIT License.
+3. **Check Container Health**:
+   ```bash
+   docker inspect --format='{{json .State.Health}}' store_product
+   ```
